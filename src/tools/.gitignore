@@ -16,6 +16,7 @@ fra_edit
 fra_view
 fsa_edit
 fsa_view
+fsa_view_json
 gen_file
 get_dc_data
 get_hostname

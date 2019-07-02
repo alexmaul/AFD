@@ -44,7 +44,7 @@ AM_CPPFLAGS                  = -I.. -I../init_afd -I../amg -I../fd\
 bin_PROGRAMS                 = afdcmd afdcfg afd_hex_print afd_status $(AFDTR)\
                                $(AFDIPDBCMD) fsa_edit fsa_view fra_edit\
                                fra_view get_dc_data get_hostname grib2wmo\
-                               jid_view set_pw udc
+                               jid_view set_pw udc fsa_view_json
 sbin_PROGRAMS                = cache_spy convert_fsa convert_stat\
                                current_job_list_spy dc_id_spy dir_spy\
                                $(DUPCHECK) file_mask_list_spy\
@@ -110,6 +110,8 @@ fsa_edit_SOURCES             = fsa_edit.c
 fsa_edit_LDADD               = ../common/libafd.a
 fsa_view_SOURCES             = fsa_view.c
 fsa_view_LDADD               = ../common/libafd.a @AFD_MATH_LIB@
+fsa_view_json_SOURCES             = fsa_view_json.c
+fsa_view_json_LDADD               = ../common/libafd.a @AFD_MATH_LIB@
 fra_version_SOURCES          = fra_version.c
 fra_version_LDADD            = ../common/libafd.a
 fra_edit_SOURCES             = fra_edit.c
