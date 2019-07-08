@@ -328,6 +328,7 @@ int main(int argc, char *argv[])
 #endif
                (pri_off_t) fsa[j].total_file_size);
       (void) fprintf(stdout, "\"transfers\":%d,", fsa[j].active_transfers);
+      (void) fprintf(stdout, "\"bytes_send\":%d,", fsa[j].bytes_send);
 
       (void) fprintf(stdout, "\"jobs\":[");
       for (i = 0; i < fsa[j].allowed_transfers; i++)
