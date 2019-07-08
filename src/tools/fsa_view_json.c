@@ -127,7 +127,7 @@ int main(int argc, char *argv[])
 
    if (argc == 2)
    {
-      if (isdigit((int)(argv[1][0])) != 0)
+      if (isdigit((int) (argv[1][0])) != 0)
       {
          position = atoi(argv[1]);
          last = position + 1;
@@ -153,8 +153,8 @@ int main(int argc, char *argv[])
       if (j == INCORRECT_VERSION)
       {
          (void) fprintf(stderr,
-               _("ERROR   : This program is not able to attach to the FSA due to incorrect version. (%s %d)\n"),
-               __FILE__, __LINE__);
+                  _("ERROR   : This program is not able to attach to the FSA due to incorrect version. (%s %d)\n"),
+                  __FILE__, __LINE__);
       }
       else
       {
@@ -326,7 +326,7 @@ int main(int argc, char *argv[])
 #else
       (void) fprintf(stdout, "\"file_size\":%lld,",
 #endif
-            (pri_off_t) fsa[j].total_file_size);
+               (pri_off_t) fsa[j].total_file_size);
       (void) fprintf(stdout, "\"transfers\":%d,", fsa[j].active_transfers);
 
       (void) fprintf(stdout, "\"jobs\":[");
@@ -344,15 +344,15 @@ int main(int argc, char *argv[])
             {
                if ((fsa[j].protocol & FTP_FLAG) || (fsa[j].protocol & SFTP_FLAG) || (fsa[j].protocol & HTTP_FLAG) ||
 #ifdef _WITH_MAP_SUPPORT
-                     (fsa[j].protocol & MAP_FLAG) ||
+                        (fsa[j].protocol & MAP_FLAG) ||
 #endif
 #ifdef _WITH_SCP_SUPPORT
-                     (fsa[j].protocol & SCP_FLAG) ||
+                        (fsa[j].protocol & SCP_FLAG) ||
 #endif
 #ifdef _WITH_WMO_SUPPORT
-                     (fsa[j].protocol & WMO_FLAG) ||
+                        (fsa[j].protocol & WMO_FLAG) ||
 #endif
-                     (fsa[j].protocol & SMTP_FLAG))
+                        (fsa[j].protocol & SMTP_FLAG))
                {
                   (void) fprintf(stdout, "\"connect_status\":\"CONNECTING\",");
                }
@@ -426,11 +426,11 @@ int main(int argc, char *argv[])
             break;
 #endif
 #ifdef _WITH_WMO_SUPPORT
-         case WMO_BURST_TRANSFER_ACTIVE:
+            case WMO_BURST_TRANSFER_ACTIVE:
             (void) fprintf(stdout, "\"connect_status\":\"WMO burst active\",");
             break;
 
-         case WMO_ACTIVE:
+            case WMO_ACTIVE:
             (void) fprintf(stdout, "\"connect_status\":\"WMO active\",");
             break;
 #endif
@@ -443,7 +443,8 @@ int main(int argc, char *argv[])
             (void) fprintf(stdout, "\"connect_status\":\"Unknown status\",");
             break;
          }
-         (void) fprintf(stdout, "\"number_of_files\":%d}", fsa[j].job_status[i].no_of_files);
+         (void) fprintf(stdout, "\"number_of_files\":%d,", fsa[j].job_status[i].no_of_files);
+         (void) fprintf(stdout, "\"number_of_files_done\":%d}", fsa[j].job_status[i].no_of_files_done);
       }
       (void) fprintf(stdout, "]}\n");
    }
