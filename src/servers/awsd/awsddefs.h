@@ -18,8 +18,8 @@
  *  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-#ifndef __wsddefs_h
-#define __wsddefs_h
+#ifndef __awsddefs_h
+#define __awsddefs_h
 
 #include "../log/logdefs.h" /* MAX_LOG_NAME_LENGTH */
 
@@ -34,13 +34,13 @@
 #define MAX_LOG_COMMAND_LENGTH   (2 + 1 + MAX_INT_LENGTH + 1 + \
                                   MAX_INT_LENGTH + 1 + MAX_INT_LENGTH + 1)
 #define DEFAULT_AFD_PORT_NO      "4444"
-#define DEFAULT_AFDD_LOG_DEFS    0
+#define DEFAULT_AWSD_LOG_DEFS    0
 #define DEFAULT_FILE_NO          0
 #define EVERYTHING               -1
-#define AFDD_CMD_TIMEOUT         900
-#define AFDD_LOG_CHECK_INTERVAL  2
-#define MAX_AFDD_CONNECTIONS     5
-#define MAX_AFDD_CONNECTIONS_DEF "MAX_AFDD_CONNECTIONS"
+#define AWSD_CMD_TIMEOUT         900
+#define AWSD_LOG_CHECK_INTERVAL  2
+#define MAX_AWSD_CONNECTIONS     5
+#define MAX_AWSD_CONNECTIONS_DEF "MAX_AWSD_CONNECTIONS"
 #define AFD_SHUTTING_DOWN        124
 #define LOG_WRITE_INTERVAL       30 /* Interval at which we must write */
                                     /* some log data before afd_mon    */
@@ -130,7 +130,7 @@
 #define LOG_SYNTAX            "214 Syntax: LOG <sp> <log type> <sp> <options> <sp> <date> <offset>"
 #define LOG_TYPES_SYNTAX      "214         log types: LS,LE,LR,LT,LB,LI,LU,LP,LO,LD,LN,JD"
 
-#define AFDD_SHUTDOWN_MESSAGE "500 AFDD shutdown."
+#define AWSD_SHUTDOWN_MESSAGE "500 AWSD shutdown."
 
 /* Definitions for the different logs in the logdata array. */
 #define SYS_LOG_POS           0
@@ -346,12 +346,12 @@ struct logdata
        };
 
 /* Structure to hold open file descriptors. */
-#define AFDD_ILOG_NO             0
-#define AFDD_OLOG_NO             1
-#define AFDD_SLOG_NO             2
-#define AFDD_TLOG_NO             3
-#define AFDD_TDLOG_NO            4
-#define MAX_AFDD_LOG_FILES       5
+#define AWSD_ILOG_NO             0
+#define AWSD_OLOG_NO             1
+#define AWSD_SLOG_NO             2
+#define AWSD_TLOG_NO             3
+#define AWSD_TDLOG_NO            4
+#define MAX_AWSD_LOG_FILES       5
 struct fd_cache
        {
           ino_t st_ino;
@@ -372,4 +372,4 @@ extern void check_changes(FILE *),
             show_job_list(FILE *),
             show_summary_stat(FILE *);
 
-#endif /* __afdddefs_h */
+#endif /* __awsddefs_h */

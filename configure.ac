@@ -328,6 +328,14 @@ AC_ARG_ENABLE(wmod_support,
    [ac_cv_wmod_support=""
     AM_CONDITIONAL(WITH_WMOD_SUPPORT, false)])
 
+AC_ARG_ENABLE(awsd_support,
+   [  --enable-awsd_support           enable AWSD support],
+   [AM_CONDITIONAL(WITH_AWSD_SUPPORT, true)
+    AC_DEFINE([_WITH_AWSD_SUPPORT], [], [With AWSD support])
+    ac_cv_awsd_support="AWSD "],
+   [ac_cv_awsd_support=""
+    AM_CONDITIONAL(WITH_AWSD_SUPPORT, false)])
+
 AC_ARG_ENABLE(de_mail_support,
    [  --enable-de_mail_support        enable DE-mail support],
    [AM_CONDITIONAL(WITH_DE_MAIL_SUPPORT, true)
@@ -1604,6 +1612,7 @@ src/servers/afdd/Makefile
 src/servers/atpd/Makefile
 src/servers/demcd/Makefile
 src/servers/wmod/Makefile
+src/servers/awsd/Makefile
 src/test/Makefile
 src/test/filter/Makefile
 src/UI/Makefile
@@ -1689,7 +1698,7 @@ echo "    With AFD monitor                 : ${ac_cv_afd_mon}"
 echo "    Multiple file system support     : ${ac_cv_multi_fs_support}"
 echo "    With duplicate check support     : ${ac_cv_dupcheck_support}"
 echo "    Protocols supported              : ${ac_cv_ftp_support}${ac_cv_sftp_support}${ac_cv_smtp_support}${ac_cv_http_support}${ac_cv_wmo_support}${ac_cv_loc_support}${ac_cv_fd_exec_support}${ac_cv_scp_support}${ac_cv_demail_support}${ac_cv_dfax_support}"
-echo "    With server support              : ${ac_cv_atpd_support}${ac_cv_wmod_support}"
+echo "    With server support              : ${ac_cv_atpd_support}${ac_cv_wmod_support}${ac_cv_awsd_support}"
 echo "    With largefile support           : ${ac_cv_largefile}"
 echo "    With inotify support             : ${ac_cv_allow_inotify}"
 echo "    With internal IP database        : ${ac_cv_ip_database}"

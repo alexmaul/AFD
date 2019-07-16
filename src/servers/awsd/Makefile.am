@@ -18,10 +18,10 @@
 
 MAINTAINERCLEANFILES = Makefile.in
 CLEANFILES           = gmon.out core core.*
-noinst_HEADERS       = wsddefs.h
+noinst_HEADERS       = awsddefs.h
 AM_CPPFLAGS          = -I../.. -I../../log -I../../init_afd -I../common
-bin_PROGRAMS         = wsd
-afdd_SOURCES         = wsd.c\
+bin_PROGRAMS         = awsd
+awsd_SOURCES         = awsd.c\
                        check_changes.c\
                        check_logs.c\
                        display_file.c\
@@ -32,7 +32,7 @@ afdd_SOURCES         = wsd.c\
                        show_host_stat.c\
                        show_job_list.c\
                        show_summary_stat.c
-afdd_LDADD           = ../../common/libafd.a ../common/libserverafd.a @EXTRA_SOCKET_LIBS@
+awsd_LDADD           = ../../common/libafd.a ../common/libserverafd.a @EXTRA_SOCKET_LIBS@
 
 clean-local:
 	-rm -rf .deps

@@ -31,5 +31,10 @@ if WITH_DE_MAIL_SUPPORT
 else
    DEMCD_DIR =
 endif
+if WITH_AWSD_SUPPORT
+   AWSD_DIR  = awsd
+else
+   AWSD_DIR  =
+endif
 MAINTAINERCLEANFILES     = Makefile.in
-SUBDIRS                  = common afdd $(ATPD_DIR) $(DEMCD_DIR) $(WMOD_DIR)
+SUBDIRS                  = common afdd $(ATPD_DIR) $(DEMCD_DIR) $(WMOD_DIR) $(AWSD_DIR)

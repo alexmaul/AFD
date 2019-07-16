@@ -45,8 +45,8 @@
 #include <stdio.h>
 #ifdef STDC_HEADERS
 # include <string.h>
-#else               
-# ifndef HAVE_MEMCPY         
+#else
+# ifndef HAVE_MEMCPY
 #  define memcpy(d, s, n) bcopy ((s), (d), (n))
 #  define memmove(d, s, n) bcopy ((s), (d), (n))
 # endif
@@ -331,6 +331,9 @@ typedef unsigned long       u_long_64;
 #ifdef _WITH_DE_MAIL_SUPPORT
 # define DEMCD                     "demcd"
 #endif
+#ifdef _WITH_AWSD_SUPPORT
+# define AWSD                       "awsd"
+#endif
 #define AFD_MON                    "afd_mon"
 #define MON_PROC                   "mon"
 #define LOG_MON                    "log_mon"
@@ -479,6 +482,7 @@ typedef unsigned long       u_long_64;
 #  endif
 # endif
 #endif
+#define AWSD_LOCK_ID              11    /* AFD WebSocket Daemon               */
 
 /* Commands that can be send to DB_UPDATE_FIFO of the AMG. */
 #define HOST_CONFIG_UPDATE          4
@@ -1062,7 +1066,7 @@ typedef unsigned long       u_long_64;
 /* Definitions for FD [options]. */
 #define OUTPUT_LOG_ID                    "no log output"
 #define OUTPUT_LOG_ID_LENGTH             (sizeof(OUTPUT_LOG_ID) - 1)
-#define ARCHIVE_ID                       "archive"                  
+#define ARCHIVE_ID                       "archive"
 #define ARCHIVE_ID_LENGTH                (sizeof(ARCHIVE_ID) - 1)
 #define LOCK_ID                          "lock"
 #define LOCK_ID_LENGTH                   (sizeof(LOCK_ID) - 1)
@@ -1116,7 +1120,7 @@ typedef unsigned long       u_long_64;
 #define CHOWN_ID_LENGTH                  (sizeof(CHOWN_ID) - 1)
 #define ENCODE_ANSI_ID                   "encode ansi"
 #define ENCODE_ANSI_ID_LENGTH            (sizeof(ENCODE_ANSI_ID) - 1)
-#define SUBJECT_ID                       "subject"                   
+#define SUBJECT_ID                       "subject"
 #define SUBJECT_ID_LENGTH                (sizeof(SUBJECT_ID) - 1)
 #define FORCE_COPY_ID                    "force copy"
 #define FORCE_COPY_ID_LENGTH             (sizeof(FORCE_COPY_ID) - 1)
@@ -1267,6 +1271,7 @@ typedef unsigned long       u_long_64;
 #define RENAME_RULE_NAME_DEF             "RENAME_RULE_NAME"
 #ifdef HAVE_SETPRIORITY
 # define AFDD_PRIORITY_DEF               "AFDD_PRIORITY"
+# define AWSD_PRIORITY_DEF               "AWSD_PRIORITY"
 # ifdef _WITH_ATPD_SUPPORT
 #  define ATPD_PRIORITY_DEF              "ATPD_PRIORITY"
 # endif
@@ -2515,7 +2520,7 @@ struct filetransfer_status
                                             /* seconds, after all files  */
                                             /* have been transmitted. A  */
                                             /* value of 0 means not set. */
-#ifdef WITH_DUP_CHECK                                                      
+#ifdef WITH_DUP_CHECK
           unsigned int   dup_check_flag;    /* Flag storing the type of  */
                                             /* check that is to be done  */
                                             /* and what type of CRC to   */
@@ -2596,7 +2601,7 @@ struct filetransfer_status
                                             /* files get transfered.     */
           int            ttl;               /* Time-to-live for outgoing */
                                             /* multicasts.               */
-#ifdef WITH_DUP_CHECK                                                      
+#ifdef WITH_DUP_CHECK
           time_t         dup_check_timeout; /* When the stored CRC for   */
                                             /* duplicate checks are no   */
                                             /* longer valid. Value is in */
@@ -2685,7 +2690,7 @@ struct host_list
                                             /* the given number of       */
                                             /* seconds, after all files  */
                                             /* have been transmitted.    */
-#ifdef WITH_DUP_CHECK                                                      
+#ifdef WITH_DUP_CHECK
           unsigned int   dup_check_flag;    /* Flag storing the type of  */
                                             /* check that is to be done  */
                                             /* and what type of CRC to   */
@@ -2711,7 +2716,7 @@ struct host_list
           unsigned int  protocol;
           unsigned int  host_status;
           long          transfer_timeout;
-#ifdef WITH_DUP_CHECK                                                      
+#ifdef WITH_DUP_CHECK
           time_t        dup_check_timeout;  /* When the stored CRC for   */
                                             /* duplicate checks are no   */
                                             /* longer valid. Value is in */
@@ -2975,7 +2980,7 @@ struct fileretrieve_status
           unsigned int  keep_connected;     /* After all files have been */
                                             /* retrieved, the time to    */
                                             /* stay connected.           */
-#ifdef WITH_DUP_CHECK                                                      
+#ifdef WITH_DUP_CHECK
           unsigned int  dup_check_flag;     /* Flag storing the type of  */
                                             /* check that is to be done  */
                                             /* and what type of CRC to   */
@@ -3014,7 +3019,7 @@ struct fileretrieve_status
           off_t         max_copied_file_size; /* The maximum number of   */
                                             /* bytes that we copy in one */
                                             /* go.                       */
-#ifdef WITH_DUP_CHECK                                                      
+#ifdef WITH_DUP_CHECK
           time_t        dup_check_timeout;  /* When the stored CRC for   */
                                             /* duplicate checks are no   */
                                             /* longer valid. Value is in */

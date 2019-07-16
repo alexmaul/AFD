@@ -1,5 +1,5 @@
 /*
- *  afdd.c - Part of AFD, an automatic file distribution program.
+ *  awsd.c - Part of AFD, an automatic file distribution program.
  *  Copyright (c) 1997 - 2016 Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
@@ -22,10 +22,10 @@
 DESCR__S_M1
 /*
  ** NAME
- **   afdd - TCP command daemon for the AFD
+ **   awsd - TCP command daemon for the AFD
  **
  ** SYNOPSIS
- **   afdd [--version][-w <AFD working directory>]
+ **   awsd [--version][-w <AFD working directory>]
  **
  ** DESCRIPTION
  **   This is a small tcp command server at port AFD_PORT_NO that
@@ -47,7 +47,7 @@ DESCR__S_M1
  ** HISTORY
  **   22.06.1997 H.Kiehl Created
  **   22.08.1998 H.Kiehl Added some more exit handlers.
- **   26.01.2006 H.Kiehl Made MAX_AFDD_CONNECTIONS configurable in AFD_CONFIG.
+ **   26.01.2006 H.Kiehl Made MAX_AWSD_CONNECTIONS configurable in AFD_CONFIG.
  **   23.11.2008 H.Kiehl Added danger_no_of_jobs.
  **   04.01.2011 H.Kiehl Ensure that we do not set a port that is in the
  **                      dynamic port range.
@@ -76,11 +76,11 @@ DESCR__E_M1
 #include <netdb.h>
 #include <errno.h>
 #include "server_common_defs.h"
-#include "afdddefs.h"
+#include "awsddefs.h"
 #include "version.h"
 
 /* Global variables. */
-int               default_log_defs = DEFAULT_AFDD_LOG_DEFS,
+int               default_log_defs = DEFAULT_AWSD_LOG_DEFS,
                   *ip_log_defs = NULL,
                   log_defs = 0,
                   number_of_trusted_ips,
@@ -100,14 +100,14 @@ const char        *sys_log_name = SYSTEM_LOG_FIFO;
 
 /* Local global variables. */
 static int        in_child = NO,
-                  max_afdd_connections = MAX_AFDD_CONNECTIONS,
+                  max_awsd_connections = MAX_AWSD_CONNECTIONS,
                   new_sockfd,
                   sockfd,
                   no_of_connections;
 
 /* Local function prototypes. */
-static void       afdd_exit(void),
-                  get_afdd_config_value(char *, int *),
+static void       awsd_exit(void),
+                  get_awsd_config_value(char *, int *),
 #ifdef LINUX
                   get_ip_local_port_range(int *, int *),
 #endif
@@ -150,16 +150,16 @@ main(int argc, char *argv[])
    p_work_dir_end = work_dir + strlen(work_dir);
    no_of_connections = 0;
    (void)strcpy(port_no, DEFAULT_AFD_PORT_NO);
-   get_afdd_config_value(port_no, &max_afdd_connections);
-   if ((pid = malloc((max_afdd_connections * sizeof(pid_t)))) == NULL)
+   get_awsd_config_value(port_no, &max_awsd_connections);
+   if ((pid = malloc((max_awsd_connections * sizeof(pid_t)))) == NULL)
    {
       system_log(ERROR_SIGN, __FILE__, __LINE__,
                  _("Failed to malloc() %d bytes : %s"),
-                 (max_afdd_connections * sizeof(pid_t)),
+                 (max_awsd_connections * sizeof(pid_t)),
                  strerror(errno));
       exit(INCORRECT);
    }
-   (void)memset(pid, 0, max_afdd_connections * sizeof(pid_t));
+   (void)memset(pid, 0, max_awsd_connections * sizeof(pid_t));
    if ((ptr = getenv("LOGNAME")) != NULL)
    {
       length = strlen(ptr);
@@ -220,7 +220,7 @@ main(int argc, char *argv[])
    (void)memset(ld, 0, (NO_OF_LOGS * sizeof(struct logdata)));
 
    /* Do some cleanups when we exit. */
-   if (atexit(afdd_exit) != 0)          
+   if (atexit(awsd_exit) != 0)
    {
       system_log(FATAL_SIGN, __FILE__, __LINE__,
                  _("Could not register exit handler : %s"), strerror(errno));
@@ -239,11 +239,11 @@ main(int argc, char *argv[])
       exit(INCORRECT);
    }
 
-   if ((ptr = lock_proc(AFDD_LOCK_ID, NO)) != NULL)
+   if ((ptr = lock_proc(AWSD_LOCK_ID, NO)) != NULL)
    {
       system_log(ERROR_SIGN, __FILE__, __LINE__,
-                 _("Process AFDD already started by %s"), ptr);
-      (void)fprintf(stderr, _("Process AFDD already started by %s : (%s %d)\n"),
+                 _("Process AWSD already started by %s"), ptr);
+      (void)fprintf(stderr, _("Process AWSD already started by %s : (%s %d)\n"),
                     ptr, __FILE__, __LINE__);
       _exit(INCORRECT);
    }
@@ -273,7 +273,7 @@ main(int argc, char *argv[])
    {
       system_log(DEBUG_SIGN, __FILE__, __LINE__,
                  _("pathconf() _PC_LINK_MAX error, setting to %d : %s"),
-                 _POSIX_LINK_MAX, strerror(errno));                  
+                 _POSIX_LINK_MAX, strerror(errno));
       danger_no_of_jobs = _POSIX_LINK_MAX;
    }
    *p_work_dir_end = '\0';
@@ -355,7 +355,7 @@ main(int argc, char *argv[])
    } while (status == -1);
 
    system_log(INFO_SIGN, NULL, 0, _("Starting %s at port %d (%s)"),
-              AFDD, port, PACKAGE_VERSION);
+              AWSD, port, PACKAGE_VERSION);
 
    if (listen(sockfd, 5) == -1)
    {
@@ -415,7 +415,7 @@ main(int argc, char *argv[])
             if (gotcha == NO)
             {
                system_log(DEBUG_SIGN, __FILE__, __LINE__,
-                          _("AFDD: Illegal access from %s"), remote_ip_str);
+                          _("AWSD: Illegal access from %s"), remote_ip_str);
                (void)close(new_sockfd);
                continue;
             }
@@ -424,19 +424,19 @@ main(int argc, char *argv[])
          {
             trusted_ip_pos = 0;
          }
-         if (no_of_connections >= max_afdd_connections)
+         if (no_of_connections >= max_awsd_connections)
          {
             system_log(DEBUG_SIGN, __FILE__, __LINE__,
-                       _("AFDD: Connection attempt from %s, but denied because max connection (%d) reached."),
-                       remote_ip_str, max_afdd_connections);
+                       _("AWSD: Connection attempt from %s, but denied because max connection (%d) reached."),
+                       remote_ip_str, max_awsd_connections);
          }
          else
          {
             system_log(DEBUG_SIGN, NULL, 0,
-                       _("AFDD: Connection from %s"), remote_ip_str);
+                       _("AWSD: Connection from %s"), remote_ip_str);
          }
 
-         if (no_of_connections >= max_afdd_connections)
+         if (no_of_connections >= max_awsd_connections)
          {
             char reply[73 + MAX_INT_LENGTH];
 
@@ -462,7 +462,7 @@ main(int argc, char *argv[])
          }
          else
          {
-            if ((pos = get_free_connection(max_afdd_connections)) < 0)
+            if ((pos = get_free_connection(max_awsd_connections)) < 0)
             {
                if (write(new_sockfd, "421 Service not available.\r\n", 28) != 28)
                {
@@ -514,7 +514,7 @@ zombie_check(void)
        status;
 
    /* Did any of the jobs become zombies? */
-   for (i = 0; i < max_afdd_connections; i++)
+   for (i = 0; i < max_awsd_connections; i++)
    {
       if ((pid[i] > 0) &&
           (waitpid(pid[i], &status, WNOHANG) > 0))
@@ -541,9 +541,9 @@ zombie_check(void)
 }
 
 
-/*++++++++++++++++++++++++ get_afdd_config_value() ++++++++++++++++++++++*/
-static void                                                                
-get_afdd_config_value(char *port_no, int *max_afdd_connections)
+/*++++++++++++++++++++++++ get_awsd_config_value() ++++++++++++++++++++++*/
+static void
+get_awsd_config_value(char *port_no, int *max_awsd_connections)
 {
    char *buffer;
 
@@ -557,7 +557,7 @@ get_afdd_config_value(char *port_no, int *max_afdd_connections)
            value[MAX_INT_LENGTH];
 
 #ifdef HAVE_SETPRIORITY
-      if (get_definition(buffer, AFDD_PRIORITY_DEF,
+      if (get_definition(buffer, AWSD_PRIORITY_DEF,
                          value, MAX_INT_LENGTH) != NULL)
       {
          if (setpriority(PRIO_PROCESS, 0, atoi(value)) == -1)
@@ -568,17 +568,17 @@ get_afdd_config_value(char *port_no, int *max_afdd_connections)
          }
       }
 #endif
-      if (get_definition(buffer, MAX_AFDD_CONNECTIONS_DEF,
+      if (get_definition(buffer, MAX_AWSD_CONNECTIONS_DEF,
                          value, MAX_INT_LENGTH) != NULL)
       {
-         *max_afdd_connections = atoi(value);
-         if (*max_afdd_connections < 0)
+         *max_awsd_connections = atoi(value);
+         if (*max_awsd_connections < 0)
          {
             system_log(DEBUG_SIGN, __FILE__, __LINE__,
                        _("Incorrect value (%d) set in AFD_CONFIG for %s. Setting to default %d."),
-                       *max_afdd_connections, MAX_AFDD_CONNECTIONS_DEF,
-                       MAX_AFDD_CONNECTIONS);
-            *max_afdd_connections = MAX_AFDD_CONNECTIONS;
+                       *max_awsd_connections, MAX_AWSD_CONNECTIONS_DEF,
+                       MAX_AWSD_CONNECTIONS);
+            *max_awsd_connections = MAX_AWSD_CONNECTIONS;
          }
       }
 
@@ -608,7 +608,7 @@ get_afdd_config_value(char *port_no, int *max_afdd_connections)
       }
 
       /*
-       * Read all IP-numbers that may connect to AFDD. If none is found
+       * Read all IP-numbers that may connect to AWSD. If none is found
        * all IP's may connect.
        */
       do
@@ -700,7 +700,7 @@ get_afdd_config_value(char *port_no, int *max_afdd_connections)
                         counter = 0;
                         check_ptr = ptr;
                         while ((isdigit((int)(*check_ptr))) &&
-                               (*check_ptr != '\n') && (*check_ptr != '\0') && 
+                               (*check_ptr != '\n') && (*check_ptr != '\0') &&
                                (counter < MAX_INT_LENGTH))
                         {
                            check_ptr++; counter++;
@@ -817,16 +817,16 @@ get_ip_local_port_range(int *lower_limit, int *upper_limit)
 #endif
 
 
-/*++++++++++++++++++++++++++++++ afdd_exit() ++++++++++++++++++++++++++++*/
+/*++++++++++++++++++++++++++++++ awsd_exit() ++++++++++++++++++++++++++++*/
 static void
-afdd_exit(void)
+awsd_exit(void)
 {
    if (in_child == NO)
    {
       int i;
 
       /* Kill all child process. */
-      for (i = 0; i < max_afdd_connections; i++)
+      for (i = 0; i < max_awsd_connections; i++)
       {
          if (pid[i] > 0)
          {
@@ -846,7 +846,7 @@ afdd_exit(void)
          }
       }
 
-      system_log(INFO_SIGN, NULL, 0, _("Stopped %s."), AFDD);
+      system_log(INFO_SIGN, NULL, 0, _("Stopped %s."), AWSD);
    }
 
    (void)close(sockfd);
@@ -863,7 +863,7 @@ sig_segv(int signo)
 {
    system_log(FATAL_SIGN, __FILE__, __LINE__,
               _("Aaarrrggh! Received SIGSEGV."));
-   afdd_exit();
+   awsd_exit();
 
    /* Dump core so we know what happened. */
    abort();
@@ -875,7 +875,7 @@ static void
 sig_bus(int signo)
 {
    system_log(FATAL_SIGN, __FILE__, __LINE__, _("Uuurrrggh! Received SIGBUS."));
-   afdd_exit();
+   awsd_exit();
 
    /* Dump core so we know what happened. */
    abort();
