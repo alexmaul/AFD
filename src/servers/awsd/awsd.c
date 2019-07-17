@@ -149,7 +149,7 @@ main(int argc, char *argv[])
    p_work_dir = work_dir;
    p_work_dir_end = work_dir + strlen(work_dir);
    no_of_connections = 0;
-   (void)strcpy(port_no, DEFAULT_AFD_PORT_NO);
+   (void)strcpy(port_no, DEFAULT_AWSD_PORT_NO);
    get_awsd_config_value(port_no, &max_awsd_connections);
    if ((pid = malloc((max_awsd_connections * sizeof(pid_t)))) == NULL)
    {

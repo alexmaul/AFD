@@ -33,7 +33,8 @@
 /********************************************************************/
 #define MAX_LOG_COMMAND_LENGTH   (2 + 1 + MAX_INT_LENGTH + 1 + \
                                   MAX_INT_LENGTH + 1 + MAX_INT_LENGTH + 1)
-#define DEFAULT_AFD_PORT_NO      "4444"
+#define DEFAULT_AWSD_PORT_NO     "4334"
+#define DEFAULT_AWSD_PAGE        "afd-gui.html"
 #define DEFAULT_AWSD_LOG_DEFS    0
 #define DEFAULT_FILE_NO          0
 #define EVERYTHING               -1
@@ -43,94 +44,50 @@
 #define MAX_AWSD_CONNECTIONS_DEF "MAX_AWSD_CONNECTIONS"
 #define AFD_SHUTTING_DOWN        124
 #define LOG_WRITE_INTERVAL       30 /* Interval at which we must write */
-                                    /* some log data before afd_mon    */
-                                    /* thinks that the connection is   */
-                                    /* dead and disconnects.           */
+/* some log data before afd_mon    */
+/* thinks that the connection is   */
+/* dead and disconnects.           */
 
 #define DEFAULT_CHECK_INTERVAL   3 /* Default interval in seconds to */
-                                   /* check if certain values have   */
-                                   /* changed in the FSA.            */
+/* check if certain values have   */
+/* changed in the FSA.            */
 
 #define HELP_CMD              "HELP\r\n"
 #define QUIT_CMD              "QUIT\r\n"
 #define TRACEI_CMD            "TRACEI"
 #define TRACEI_CMD_LENGTH     (sizeof(TRACEI_CMD) - 1)
 #define TRACEI_CMDL           "TRACEI\r\n"
-#define TRACEO_CMD            "TRACEO"
-#define TRACEO_CMD_LENGTH     (sizeof(TRACEO_CMD) - 1)
-#define TRACEO_CMDL           "TRACEO\r\n"
-#define TRACEF_CMD            "TRACEF"
-#define TRACEF_CMD_LENGTH     (sizeof(TRACEF_CMD) - 1)
-#define TRACEF_CMDL           "TRACEF\r\n"
-#define ILOG_CMD              "ILOG"
-#define ILOG_CMD_LENGTH       (sizeof(ILOG_CMD) - 1)
-#define ILOG_CMDL             "ILOG\r\n"
-#define OLOG_CMD              "OLOG"
-#define OLOG_CMD_LENGTH       (sizeof(OLOG_CMD) - 1)
-#define OLOG_CMDL             "OLOG\r\n"
-#define SLOG_CMD              "SLOG"
-#define SLOG_CMD_LENGTH       (sizeof(SLOG_CMD) - 1)
-#define SLOG_CMDL             "SLOG\r\n"
-#define TLOG_CMD              "TLOG"
-#define TLOG_CMD_LENGTH       (sizeof(TLOG_CMD) - 1)
-#define TLOG_CMDL             "TLOG\r\n"
-#define TDLOG_CMD             "TDLOG"
-#define TDLOG_CMD_LENGTH      (sizeof(TDLOG_CMD) - 1)
-#define TDLOG_CMDL            "TDLOG\r\n"
-#define PROC_CMD              "PROC\r\n"
-#define PROC_CMD_LENGTH       (sizeof(PROC_CMD) - 1)
-#define DISC_CMD              "DISC\r\n"
-#define DISC_CMD_LENGTH       (sizeof(DISC_CMD) - 1)
-#define STAT_CMD              "STAT"
-#define STAT_CMD_LENGTH       (sizeof(STAT_CMD) - 1)
-#define STAT_CMDL             "STAT\r\n"
-#define HSTAT_CMD             "HSTAT"
-#define HSTAT_CMD_LENGTH      (sizeof(HSTAT_CMD) - 1)
-#define HSTAT_CMDL            "HSTAT\r\n"
-#define START_STAT_CMD        "SSTAT"
-#define START_STAT_CMD_LENGTH (sizeof(START_STAT_CMD) - 1)
-#define START_STAT_CMDL       "SSTAT\r\n"
-#define LDB_CMD               "LDB\r\n"
-#define LDB_CMD_LENGTH        (sizeof(LDB_CMD) - 1)
-#define LRF_CMD               "LRF\r\n"
-#define LRF_CMD_LENGTH        (sizeof(LRF_CMD) - 1)
-#define INFO_CMD              "INFO "
-#define INFO_CMD_LENGTH       (sizeof(INFO_CMD) - 1)
-#define INFO_CMDL             "INFO\r\n"
-#define AFDSTAT_CMD           "AFDSTAT"
-#define AFDSTAT_CMD_LENGTH    (sizeof(AFDSTAT_CMD) - 1)
-#define AFDSTAT_CMDL          "AFDSTAT\r\n"
-#define LOG_CMD               "LOG"
-#define LOG_CMD_LENGTH        (sizeof(LOG_CMD) - 1)
-#define LOG_CMDL              "LOG\r\n"
-#define NOP_CMD               "NOP"
-#define NOP_CMD_LENGTH        (sizeof(NOP_CMD) - 1)
-#define NOP_CMDL              "NOP\r\n"
-
-#define QUIT_SYNTAX           "214 Syntax: QUIT (terminate service)"
-#define HELP_SYNTAX           "214 Syntax: HELP [ <sp> <string> ]"
-#define TRACEI_SYNTAX         "214 Syntax: TRACEI [<sp> <file name>] (trace input)"
-#define TRACEO_SYNTAX         "214 Syntax: TRACEO [<sp> <file name>] (trace output)"
-#define TRACEF_SYNTAX         "214 Syntax: TRACEF [<sp> <file name>] (trace input)"
-#define ILOG_SYNTAX           "214 Syntax: ILOG [<sp> <search string>] [<sp> -<lines>] [<sp> +<duration>] [<sp> #<log number>] (input log)"
-#define OLOG_SYNTAX           "214 Syntax: OLOG [<sp> <search string>] [<sp> -<lines>] [<sp> +<duration>] [<sp> #<log number>] (output log)"
-#define SLOG_SYNTAX           "214 Syntax: SLOG [<sp> <search string>] [<sp> -<lines>] [<sp> +<duration>] [<sp> #<log number>] (system log)"
-#define TLOG_SYNTAX           "214 Syntax: TLOG [<sp> <search string>] [<sp> -<lines>] [<sp> +<duration>] [<sp> #<log number>] (transfer log)"
-#define TDLOG_SYNTAX          "214 Syntax: TDLOG [<sp> <search string>] [<sp> -<lines>] [<sp> +<duration>] [<sp> #<log number>] (transfer debug log)"
-#define PROC_SYNTAX           "214 Syntax: PROC (shows all process of the AFD)"
-#define DISC_SYNTAX           "214 Syntax: DISC (shows disk usage)"
-#define STAT_SYNTAX           "214 Syntax: STAT [<sp> <host name>] [<sp> -H | -D | -Y [<sp> n]]"
-#define HSTAT_SYNTAX          "214 Syntax: HSTAT (shows all host statistics and status)"
-#define START_STAT_SYNTAX     "214 Syntax: SSTAT (start summary status of AFD)"
-#define LDB_SYNTAX            "214 Syntax: LDB (list AMG database)"
-#define LRF_SYNTAX            "214 Syntax: LRF (list rename file)"
-#define INFO_SYNTAX           "214 Syntax: INFO <sp> <host name>"
-#define AFDSTAT_SYNTAX        "214 Syntax: AFDSTAT [<sp> <host name>]"
-#define NOP_SYNTAX            "214 Syntax: NOP (checks if connection is still up)"
-#define LOG_SYNTAX            "214 Syntax: LOG <sp> <log type> <sp> <options> <sp> <date> <offset>"
-#define LOG_TYPES_SYNTAX      "214         log types: LS,LE,LR,LT,LB,LI,LU,LP,LO,LD,LN,JD"
 
 #define AWSD_SHUTDOWN_MESSAGE "500 AWSD shutdown."
+
+/* Shortcut pragmas for http-header.
+ * a: filehandle, b: value (str|int)
+ */
+#define print_http_state(a, b) (fprintf(a, "HTTP/1.1 %s\r\n", b))
+#define print_http_content_length(a, b) (fprintf(a, "Content-length: %d\r\n", b))
+#define print_http_content_type(a, b) (fprintf(a, "Content-type: %s\r\n", b))
+
+#define HTTP_METHOD_GET     1
+#define HTTP_METHOD_POST    2
+
+#define HTTP_CONTENT_TYPE_TEXT      "text/plain"
+#define HTTP_CONTENT_TYPE_HTML      "text/html"
+#define HTTP_CONTENT_TYPE_JSON      "application/json"
+
+#define HTTP_STATUS_200    "200 OK"
+#define HTTP_STATUS_202    "202 Accepted"
+#define HTTP_STATUS_204    "204 No Content"
+#define HTTP_STATUS_304    "304 Not Modified"
+#define HTTP_STATUS_308    "308 Permanent Redirect"
+#define HTTP_STATUS_400    "400 Bad Request"
+#define HTTP_STATUS_401    "401 Unauthorized"
+#define HTTP_STATUS_403    "403 Forbidden"
+#define HTTP_STATUS_404    "404 Not Found"
+#define HTTP_STATUS_405    "405 Method Not Allowed"
+#define HTTP_STATUS_408    "408 Request Timeout"
+#define HTTP_STATUS_500    "500 Internal Server Error"
+#define HTTP_STATUS_501    "501 Not Implemented"
+#define HTTP_STATUS_503    "503 Service Unavailable"
 
 /* Definitions for the different logs in the logdata array. */
 #define SYS_LOG_POS           0
@@ -330,20 +287,20 @@
 /* Structure to hold all relevant log managemant data. */
 #define FIRST_POS_SET         1
 struct logdata
-       {
-          char         log_name[MAX_LOG_NAME_LENGTH + 1];
-          char         log_data_cmd[3];
-          char         log_inode_cmd[3];
-          FILE         *fp;
-          ino_t        current_log_inode;
-          off_t        offset;
-          int          current_log_no;
-          int          log_name_length;
-          unsigned int log_flag;
-          unsigned int options;
-          unsigned int packet_no;
-          unsigned int flag;
-       };
+{
+   char log_name[MAX_LOG_NAME_LENGTH + 1];
+   char log_data_cmd[3];
+   char log_inode_cmd[3];
+   FILE *fp;
+   ino_t current_log_inode;
+   off_t offset;
+   int current_log_no;
+   int log_name_length;
+   unsigned int log_flag;
+   unsigned int options;
+   unsigned int packet_no;
+   unsigned int flag;
+};
 
 /* Structure to hold open file descriptors. */
 #define AWSD_ILOG_NO             0
@@ -353,23 +310,42 @@ struct logdata
 #define AWSD_TDLOG_NO            4
 #define MAX_AWSD_LOG_FILES       5
 struct fd_cache
-       {
-          ino_t st_ino;
-          int   fd;
-       };
+{
+   ino_t st_ino;
+   int fd;
+};
+
+/* Structure holding a parsed http request.
+ * The void* and struct* are lists with the last element set to NULL.
+ */
+struct http_request
+{
+   unsigned int http_method;
+   char url[1024];
+   char **path_list;
+   struct http_key_value *param_list;
+   struct http_key_value *header_list;
+   char *content;
+   unsigned int content_length;
+   unsigned int content_type;
+};
+
+#define HTTP_PARAM_TYPE_STR     1
+#define HTTP_PARAM_TYPE_INT     2
+#define HTTP_PARAM_TYPE_DOUBLE  3
+
+struct http_key_value
+{
+   char *key;
+   void *value;
+   unsigned int type;
+};
 
 /* Function prototypes. */
-extern int  get_display_data(char *, int, char *, int, int, int, int);
+extern int get_display_data(char *, int, char *, int, int, int, int);
 extern long check_logs(time_t);
-extern void check_changes(FILE *),
-            close_get_display_data(void),
-            display_file(FILE *),
-            handle_request(int, int, int, char *),
-            init_get_display_data(void),
-            show_dir_list(FILE *),
-            show_host_list(FILE *),
-            show_host_stat(FILE *),
-            show_job_list(FILE *),
-            show_summary_stat(FILE *);
+extern void check_changes(FILE *), close_get_display_data(void), display_file(FILE *), handle_request(int, int, int,
+         char *), init_get_display_data(void), show_dir_list(FILE *), show_host_list(FILE *), show_host_stat(FILE *),
+         show_job_list(FILE *), show_summary_stat(FILE *);
 
 #endif /* __awsddefs_h */
