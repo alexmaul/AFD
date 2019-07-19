@@ -35,6 +35,7 @@
                                   MAX_INT_LENGTH + 1 + MAX_INT_LENGTH + 1)
 #define DEFAULT_AWSD_PORT_NO     "4334"
 #define DEFAULT_AWSD_PAGE        "afd-gui.html"
+#define AWSD_DIR         "awsd"
 #define DEFAULT_AWSD_LOG_DEFS    0
 #define DEFAULT_FILE_NO          0
 #define EVERYTHING               -1
@@ -57,37 +58,6 @@
 #define TRACEI_CMD            "TRACEI"
 #define TRACEI_CMD_LENGTH     (sizeof(TRACEI_CMD) - 1)
 #define TRACEI_CMDL           "TRACEI\r\n"
-
-#define AWSD_SHUTDOWN_MESSAGE "500 AWSD shutdown."
-
-/* Shortcut pragmas for http-header.
- * a: filehandle, b: value (str|int)
- */
-#define print_http_state(a, b) (fprintf(a, "HTTP/1.1 %s\r\n", b))
-#define print_http_content_length(a, b) (fprintf(a, "Content-length: %d\r\n", b))
-#define print_http_content_type(a, b) (fprintf(a, "Content-type: %s\r\n", b))
-
-#define HTTP_METHOD_GET     1
-#define HTTP_METHOD_POST    2
-
-#define HTTP_CONTENT_TYPE_TEXT      "text/plain"
-#define HTTP_CONTENT_TYPE_HTML      "text/html"
-#define HTTP_CONTENT_TYPE_JSON      "application/json"
-
-#define HTTP_STATUS_200    "200 OK"
-#define HTTP_STATUS_202    "202 Accepted"
-#define HTTP_STATUS_204    "204 No Content"
-#define HTTP_STATUS_304    "304 Not Modified"
-#define HTTP_STATUS_308    "308 Permanent Redirect"
-#define HTTP_STATUS_400    "400 Bad Request"
-#define HTTP_STATUS_401    "401 Unauthorized"
-#define HTTP_STATUS_403    "403 Forbidden"
-#define HTTP_STATUS_404    "404 Not Found"
-#define HTTP_STATUS_405    "405 Method Not Allowed"
-#define HTTP_STATUS_408    "408 Request Timeout"
-#define HTTP_STATUS_500    "500 Internal Server Error"
-#define HTTP_STATUS_501    "501 Not Implemented"
-#define HTTP_STATUS_503    "503 Service Unavailable"
 
 /* Definitions for the different logs in the logdata array. */
 #define SYS_LOG_POS           0
@@ -314,6 +284,37 @@ struct fd_cache
    ino_t st_ino;
    int fd;
 };
+
+#define AWSD_SHUTDOWN_MESSAGE "500 AWSD shutdown."
+
+/* Shortcut pragmas for http-header.
+ * a: filehandle, b: value (str|int)
+ */
+#define print_http_state(a, b) (fprintf(a, "HTTP/1.1 %s\r\n", b))
+#define print_http_content_length(a, b) (fprintf(a, "Content-length: %d\r\n", b))
+#define print_http_content_type(a, b) (fprintf(a, "Content-type: %s\r\n", b))
+
+#define HTTP_METHOD_GET     1
+#define HTTP_METHOD_POST    2
+
+#define HTTP_CONTENT_TYPE_TEXT      "text/plain"
+#define HTTP_CONTENT_TYPE_HTML      "text/html"
+#define HTTP_CONTENT_TYPE_JSON      "application/json"
+
+#define HTTP_STATUS_200    "200 OK"
+#define HTTP_STATUS_202    "202 Accepted"
+#define HTTP_STATUS_204    "204 No Content"
+#define HTTP_STATUS_304    "304 Not Modified"
+#define HTTP_STATUS_308    "308 Permanent Redirect"
+#define HTTP_STATUS_400    "400 Bad Request"
+#define HTTP_STATUS_401    "401 Unauthorized"
+#define HTTP_STATUS_403    "403 Forbidden"
+#define HTTP_STATUS_404    "404 Not Found"
+#define HTTP_STATUS_405    "405 Method Not Allowed"
+#define HTTP_STATUS_408    "408 Request Timeout"
+#define HTTP_STATUS_500    "500 Internal Server Error"
+#define HTTP_STATUS_501    "501 Not Implemented"
+#define HTTP_STATUS_503    "503 Service Unavailable"
 
 /* Structure holding a parsed http request.
  * The void* and struct* are lists with the last element set to NULL.
