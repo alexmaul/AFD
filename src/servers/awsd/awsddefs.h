@@ -41,7 +41,7 @@
 #define EVERYTHING               -1
 #define AWSD_CMD_TIMEOUT         900
 #define AWSD_LOG_CHECK_INTERVAL  2
-#define MAX_AWSD_CONNECTIONS     5
+#define MAX_AWSD_CONNECTIONS     10
 #define MAX_AWSD_CONNECTIONS_DEF "MAX_AWSD_CONNECTIONS"
 #define AFD_SHUTTING_DOWN        124
 #define LOG_WRITE_INTERVAL       30 /* Interval at which we must write */
@@ -300,6 +300,8 @@ struct fd_cache
 #define HTTP_CONTENT_TYPE_TEXT      "text/plain"
 #define HTTP_CONTENT_TYPE_HTML      "text/html"
 #define HTTP_CONTENT_TYPE_JSON      "application/json"
+#define HTTP_CONTENT_TYPE_JS        "application/javascript"
+#define HTTP_CONTENT_TYPE_BINARY    "application/octet-stream"
 
 #define HTTP_STATUS_200    "200 OK"
 #define HTTP_STATUS_202    "202 Accepted"

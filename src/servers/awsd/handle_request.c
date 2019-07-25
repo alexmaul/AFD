@@ -176,7 +176,7 @@ void handle_request(int sock_sd, int pos, int trusted_ip_pos, char *remote_ip_st
 
    if (request)
    {
-      fprintf(stderr, "request_method %d\n\n", request->http_method); //XXX
+      fprintf(stderr, "request_method %d\n\nurl: '%s'\n\n", request->http_method, request->url); //XXX
 
       if (request->http_method != HTTP_METHOD_GET && request->http_method != HTTP_METHOD_POST)
       {
@@ -205,9 +205,19 @@ void handle_request(int sock_sd, int pos, int trusted_ip_pos, char *remote_ip_st
          }
          else if (strcmp(request->path_list[0], "static") == 0 && request->path_list[1] != NULL)
          {
+            for (i = 0; request->path_list[i] != NULL; i++)
+               ;
+            i--;
+
             (void) snprintf(p_work_dir_end,
-            MAX_PATH_LENGTH - (p_work_dir_end - p_work_dir), "/%s/%s", AWSD_DIR, request->path_list[1]);
+            MAX_PATH_LENGTH - (p_work_dir_end - p_work_dir), "/%s/%s", AWSD_DIR, request->path_list[i]);
+
+            fprintf(stderr, "->'%s'\n", p_work_dir); //XXX
+
             display_file(p_data);
+
+            fprintf(stderr, "display done\n"); //XXX
+
             *p_work_dir_end = '\0';
          }
          else if (request->http_method == HTTP_METHOD_GET && strcmp(request->path_list[0], "fsa") == 0)
@@ -367,6 +377,7 @@ struct http_request* parse_request(struct http_request *prev_request, int sd)
       }
       return NULL;
    }
+   fprintf(stderr, "%s\n\n", buf); //XXX
    if (strncmp(buf, "GET /", 5) == 0)
    {
       request->http_method = HTTP_METHOD_GET;
