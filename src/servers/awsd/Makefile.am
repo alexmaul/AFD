@@ -33,6 +33,6 @@ awsd_SOURCES         = awsd.c\
                        show_job_list.c\
                        show_summary_stat.c
 awsd_LDADD           = ../../common/libafd.a ../common/libserverafd.a @EXTRA_SOCKET_LIBS@
-
+LIBS                 =  -lmagic
 clean-local:
 	-rm -rf .deps
