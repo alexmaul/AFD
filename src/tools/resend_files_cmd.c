@@ -73,99 +73,71 @@ DESCR__E_M3
 /* #define WITH_RESEND_DEBUG 1 */
 
 /* External global variables. */
-extern int              items_selected,
-                        log_date_length,
-                        max_hostname_length;
-char                    *p_work_dir;
+extern int log_date_length, max_hostname_length;
+char *p_work_dir;
 extern struct item_list *il;
 
 /* Global variables. */
-int                     counter_fd,
-                        fsa_fd = -1,
-                        fsa_id,
-                        no_of_hosts;
+int counter_fd, fsa_fd = -1, fsa_id, no_of_hosts;
 #ifdef HAVE_MMAP
 off_t                   fsa_size;
 #endif
 struct filetransfer_status *fsa;
+int sys_log_fd = STDERR_FILENO;
+const char *sys_log_name = SYSTEM_LOG_FIFO;
 
 /* Local global variables. */
-static int              max_copied_files,
-                        overwrite,
-                        default_priority = 9;
-static char             archive_dir[MAX_PATH_LENGTH],
-                        *p_file_name,
-                        *p_archive_name,
-                        *p_dest_dir_end = NULL,
+static int max_copied_files, overwrite, default_priority = 9;
+static char archive_dir[MAX_PATH_LENGTH], *p_file_name, *p_archive_name, *p_dest_dir_end = NULL,
 #ifdef MULTI_FS_SUPPORT
                         *p_orig_msg_name,
 #endif
-                        *p_msg_name,
-                        dest_dir[MAX_PATH_LENGTH];
+         *p_msg_name, dest_dir[MAX_PATH_LENGTH];
 
 struct resend_list
-                        {
-                           unsigned int  job_id;
-                           char          *archive_name;
-                           char          status;   /* DONE - file has been resend. */
-                        };
+{
+   unsigned int job_id;
+   char *archive_name;
+   char *file_name;
+   char status; /* DONE - file has been resend. */
+};
 
 /* Local function prototypes. */
-static int              send_new_message(char *, time_t, unsigned int,
-                                         unsigned int, unsigned int, char,
-                                         int, off_t),
-                        get_file(char *, char *, off_t *);
-static void             resend_files(int, char **),
-                        get_afd_config_value(void),
-                        usage(char *);
-
+static int send_new_message(char*, time_t, unsigned int, unsigned int, unsigned int, char, int, off_t), get_file(char*,
+         char*, off_t*);
+static void resend_files(int, char**), get_afd_config_value(void), usage(char*);
 
 /*############################# resend_files() ##########################*/
-void
-resend_files(int no_selected, char **select_list)
+void resend_files(int no_selected, char **select_list)
 {
 #ifdef MULTI_FS_SUPPORT
    int                added_fs_id;
 #endif
-   int                i,
-                      k,
-                      total_no_of_items,
-                      length = 0,
-                      to_do = 0,    /* Number still to be done. */
-                      no_done = 0,  /* Number done.             */
-                      not_found = 0,
-                      not_in_archive = 0,
-                      select_done = 0,
-                      *unique_number;
-   unsigned int       current_job_id = 0,
-                      last_job_id = 0,
-                      split_job_counter;
-   time_t             creation_time = 0;
-   off_t              file_size = 0,
-                      total_file_size;
-   static int         user_limit = 0;
-   char               user_message[256];
-   char               *jobid_buffer;
+   int i, k, ape = 0, total_no_of_items, length = 0, to_do = 0, /* Number still to be done. */
+   no_done = 0, /* Number done.             */
+   not_found = 0, not_in_archive = 0, select_done = 0, *unique_number;
+   unsigned int current_job_id = 0, last_job_id = 0, split_job_counter;
+   time_t creation_time = 0;
+   off_t file_size = 0, total_file_size;
+   static int user_limit = 0;
+   char user_message[256];
+   char *jobid_buf_start = NULL, *jobid_buffer = NULL, *buf;
    struct resend_list *rl;
-
-   printf("%s\n", select_list[0]);
-   return;
 
    overwrite = 0;
    dest_dir[0] = '\0';
    if ((rl = calloc(no_selected, sizeof(struct resend_list))) == NULL)
    {
-      (void)fprintf(stderr, "calloc() error : %s (%s %d)",
-                 strerror(errno), __FILE__, __LINE__);
+      (void) fprintf(stderr, "calloc() error : %s (%s %d)", strerror(errno), __FILE__, __LINE__);
       return;
    }
 
    /* Open counter file, so we can create new unique name. */
    if ((counter_fd = open_counter_file(COUNTER_FILE, &unique_number)) < 0)
    {
-      (void)fprintf(stderr, "Failed to open counter file. (%s %d)",
-                 __FILE__, __LINE__);
-      free((void *)rl);
+      (void) fprintf(stderr, "Failed to open counter file. (%s %d)",
+      __FILE__, __LINE__);
+      free((void*) rl);
       return;
    }
 
@@ -173,10 +145,8 @@ resend_files(int no_selected, char **select_list)
    get_afd_config_value();
 
    /* Prepare the archive directory name. */
-   p_archive_name = archive_dir + sprintf(archive_dir, "%s%s/",
-                                          p_work_dir, AFD_ARCHIVE_DIR);
-   p_msg_name = dest_dir + sprintf(dest_dir, "%s%s%s/",
-                                   p_work_dir, AFD_FILE_DIR, OUTGOING_DIR);
+   p_archive_name = archive_dir + sprintf(archive_dir, "%s%s/", p_work_dir, AFD_ARCHIVE_DIR);
+   p_msg_name = dest_dir + sprintf(dest_dir, "%s%s%s/", p_work_dir, AFD_FILE_DIR, OUTGOING_DIR);
 #ifdef MULTI_FS_SUPPORT
    p_orig_msg_name = p_msg_name;
 #endif
@@ -184,8 +154,8 @@ resend_files(int no_selected, char **select_list)
    /* Get the fsa_id and no of host of the FSA. */
    if (fsa_attach("resend_files") != SUCCESS)
    {
-      (void)fprintf(stderr, "Failed to attach to FSA. (%s %d)",
-                 __FILE__, __LINE__);
+      (void) fprintf(stderr, "Failed to attach to FSA. (%s %d)",
+      __FILE__, __LINE__);
       return;
    }
 
@@ -198,15 +168,45 @@ resend_files(int no_selected, char **select_list)
    {
       rl[i].archive_name = strndup(select_list[i], MAX_PATH_LENGTH);
 
+      ape = 0;
+      buf = rl[i].archive_name;
+      while ((jobid_buf_start == NULL) && ((buf - rl[i].archive_name) < MAX_PATH_LENGTH) && (ape < 3))
+      {
+         if (*(buf++) == '/')
+         {
+            ape++;
+         }
+         if (ape == 3)
+         {
+            while (((buf - rl[i].archive_name) < MAX_PATH_LENGTH) && (*buf != '_'))
+            {
+               buf++;
+            }
+            buf++;
+            jobid_buf_start = buf;
+            while (((buf - rl[i].archive_name) < MAX_PATH_LENGTH) && (*buf != '/'))
+            {
+               buf++;
+            }
+            jobid_buffer = strndup(jobid_buf_start, buf - jobid_buf_start);
+            rl[i].file_name = strndup(buf + 1, MAX_FILENAME_LENGTH);
+            *buf = '\0';
+         }
+      }
 
+      fprintf(stderr, "%d buffer: %s \n", no_selected, jobid_buffer);  // XXX
 
-
-
-      rl[i].job_id = (unsigned int)strtoul(jobid_buffer, NULL, 16);
+      rl[i].job_id = (unsigned int) strtoul(jobid_buffer, NULL, 16);
       rl[i].status = FILE_PENDING;
       to_do++;
    }
 
+   i--;
+   fprintf(stderr, "i: %d  to_do: %d  arc: %s  jobid: %u  status: %d \n workdir: %s  arc_dir: %s  dest_dir: %s arcn: %s filn: %s \n", i,
+            to_do, rl[i].archive_name, rl[i].job_id, rl[i].status, p_work_dir, archive_dir, dest_dir,
+            rl[i].archive_name, rl[i].file_name
+            );  // XXX
+return; // XXX
    /*
     * Now we have the job ID of every file that is to be resend.
     * Plus we have removed those that have not been archived or
@@ -235,10 +235,17 @@ resend_files(int no_selected, char **select_list)
 
       for (k = i; k < no_selected; k++)
       {
-         if ((rl[k].status == FILE_PENDING) &&
-             (current_job_id == rl[k].job_id))
+
+         fprintf(stderr, "resend %d   cuj: %u   job: %u   status: %d \n", k, current_job_id, rl[k].job_id,
+                  rl[k].status);
+
+         if ((rl[k].status == FILE_PENDING) && (current_job_id == rl[k].job_id))
          {
+
+
+            p_archive_name = "";
             p_file_name = "";
+
 
 #ifdef MULTI_FS_SUPPORT
             if (added_fs_id == NO)
@@ -273,24 +280,15 @@ resend_files(int no_selected, char **select_list)
                {
                   int m;
 
-                  if (send_new_message(p_msg_name, creation_time,
-                                       (unsigned int)*unique_number,
-                                       split_job_counter,
-                                       current_job_id, default_priority,
-                                       max_copied_files,
-                                       total_file_size) < 0)
+                  if (send_new_message(p_msg_name, creation_time, (unsigned int) *unique_number, split_job_counter,
+                           current_job_id, default_priority, max_copied_files, total_file_size) < 0)
                   {
-                     (void)fprintf(stderr,
-                                "Failed to create message : (%s %d)",
-                                __FILE__, __LINE__);
+                     (void) fprintf(stderr, "Failed to create message : (%s %d)",
+                     __FILE__, __LINE__);
                      close_counter_file(counter_fd, &unique_number);
                      return;
                   }
 
-                  if (select_done == no_selected)
-                  {
-                     items_selected = NO;
-                  }
                   select_done = 0;
                   total_file_size = 0;
                }
@@ -299,17 +297,13 @@ resend_files(int no_selected, char **select_list)
                creation_time = time(NULL);
                *p_msg_name = '\0';
                split_job_counter = 0;
-               if (create_name(dest_dir, strlen(dest_dir), default_priority,
-                               creation_time, current_job_id,
-                               &split_job_counter, unique_number,
-                               p_msg_name,
-                               MAX_PATH_LENGTH - (p_msg_name - dest_dir),
-                               counter_fd) < 0)
+               if (create_name(dest_dir, strlen(dest_dir), default_priority, creation_time, current_job_id,
+                        &split_job_counter, unique_number, p_msg_name,
+                        MAX_PATH_LENGTH - (p_msg_name - dest_dir), counter_fd) < 0)
                {
-                  (void)fprintf(stderr,
-                             "Failed to create a unique directory : (%s %d)",
-                             __FILE__, __LINE__);
-                  free((void *)rl);
+                  (void) fprintf(stderr, "Failed to create a unique directory : (%s %d)",
+                  __FILE__, __LINE__);
+                  free((void*) rl);
                   close_counter_file(counter_fd, &unique_number);
                   return;
                }
@@ -334,7 +328,7 @@ resend_files(int no_selected, char **select_list)
                total_file_size += file_size;
                last_job_id = current_job_id;
             }
-         to_do--;
+            to_do--;
          }
       } /* for (k = i; k < no_selected; k++) */
 
@@ -343,20 +337,13 @@ resend_files(int no_selected, char **select_list)
       {
          int m;
 
-         if (send_new_message(p_msg_name, creation_time,
-                              (unsigned int)*unique_number,
-                              split_job_counter, last_job_id, default_priority,
-                              select_done, total_file_size) < 0)
+         if (send_new_message(p_msg_name, creation_time, (unsigned int) *unique_number, split_job_counter, last_job_id,
+                  default_priority, select_done, total_file_size) < 0)
          {
-            (void)fprintf(stderr, "Failed to create message : (%s %d)",
-                       __FILE__, __LINE__);
+            (void) fprintf(stderr, "Failed to create message : (%s %d)",
+            __FILE__, __LINE__);
             close_counter_file(counter_fd, &unique_number);
             return;
-         }
-
-         if (select_done == no_selected)
-         {
-            items_selected = NO;
          }
          select_done = 0;
          total_file_size = 0;
@@ -380,16 +367,14 @@ resend_files(int no_selected, char **select_list)
       }
       else
       {
-         length = sprintf(user_message, "%d files resend",
-                          no_done - overwrite);
+         length = sprintf(user_message, "%d files resend", no_done - overwrite);
       }
    }
    if (not_in_archive > 0)
    {
       if (length > 0)
       {
-         length += sprintf(&user_message[length], ", %d not in archive",
-                           not_in_archive);
+         length += sprintf(&user_message[length], ", %d not in archive", not_in_archive);
       }
       else
       {
@@ -400,8 +385,7 @@ resend_files(int no_selected, char **select_list)
    {
       if (length > 0)
       {
-         length += sprintf(&user_message[length], ", %d overwrites",
-                           overwrite);
+         length += sprintf(&user_message[length], ", %d overwrites", overwrite);
       }
       else
       {
@@ -419,44 +403,35 @@ resend_files(int no_selected, char **select_list)
          length = sprintf(user_message, "%d not found", not_found);
       }
    }
-   (void)fprintf(stderr, user_message);
+   (void) fprintf(stderr, user_message);
 
-   free((void *)rl);
+   free((void*) rl);
 
    close_counter_file(counter_fd, &unique_number);
 
    if (fsa_detach(NO) < 0)
    {
-      (void)fprintf(stderr, "Failed to detach from FSA. (%s %d)",
-                 __FILE__, __LINE__);
+      (void) fprintf(stderr, "Failed to detach from FSA. (%s %d)",
+      __FILE__, __LINE__);
    }
 
    return;
 }
 
-
 /*++++++++++++++++++++++++++ send_new_message() +++++++++++++++++++++++++*/
 /*                           ------------------                          */
 /* Description: Sends a message via fifo to the FD.                      */
 /*+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++*/
-static int
-send_new_message(char         *p_msg_name,
-                 time_t       creation_time,
-                 unsigned int unique_number,
-                 unsigned int split_job_counter,
-                 unsigned int job_id,
-                 char         priority,
-                 int          files_to_send,
-                 off_t        file_size_to_send)
+static int send_new_message(char *p_msg_name, time_t creation_time, unsigned int unique_number,
+         unsigned int split_job_counter, unsigned int job_id, char priority, int files_to_send, off_t file_size_to_send)
 {
    unsigned short dir_no;
-   int            fd,
+   int fd,
 #ifdef WITHOUT_FIFO_RW_SUPPORT
                   readfd,
 #endif
-                  ret;
-   char           msg_fifo[MAX_PATH_LENGTH],
-                  *ptr;
+            ret;
+   char msg_fifo[MAX_PATH_LENGTH], *ptr;
 
    ptr = p_msg_name;
    while ((*ptr != '/') && (*ptr != '\0'))
@@ -465,16 +440,14 @@ send_new_message(char         *p_msg_name,
    }
    if (*ptr != '/')
    {
-      (void)fprintf(stderr,
-                 "Unable to find directory number in `%s' (%s %d)",
-                 p_msg_name, __FILE__, __LINE__);
-      return(INCORRECT);
+      (void) fprintf(stderr, "Unable to find directory number in `%s' (%s %d)", p_msg_name, __FILE__, __LINE__);
+      return (INCORRECT);
    }
-   dir_no = (unsigned short)strtoul(ptr + 1, NULL, 16);
+   dir_no = (unsigned short) strtoul(ptr + 1, NULL, 16);
 
-   (void)strcpy(msg_fifo, p_work_dir);
-   (void)strcat(msg_fifo, FIFO_DIR);
-   (void)strcat(msg_fifo, MSG_FIFO);
+   (void) strcpy(msg_fifo, p_work_dir);
+   (void) strcat(msg_fifo, FIFO_DIR);
+   (void) strcat(msg_fifo, MSG_FIFO);
 
    /* Open and create message file. */
 #ifdef WITHOUT_FIFO_RW_SUPPORT
@@ -483,8 +456,7 @@ send_new_message(char         *p_msg_name,
    if ((fd = open(msg_fifo, O_RDWR)) == -1)
 #endif
    {
-      (void)fprintf(stderr, "Could not open %s : %s (%s %d)",
-                 msg_fifo, strerror(errno), __FILE__, __LINE__);
+      (void) fprintf(stderr, "Could not open %s : %s (%s %d)", msg_fifo, strerror(errno), __FILE__, __LINE__);
       ret = INCORRECT;
    }
    else
@@ -492,7 +464,7 @@ send_new_message(char         *p_msg_name,
       char fifo_buffer[MAX_BIN_MSG_LENGTH];
 
       /* Fill fifo buffer with data. */
-      *(time_t *)(fifo_buffer) = creation_time;
+      *(time_t*) (fifo_buffer) = creation_time;
 #ifdef MULTI_FS_SUPPORT
 # if SIZEOF_TIME_T == 4
       *(unsigned int *)(fifo_buffer + sizeof(time_t)) = (dev_t)strtoul(p_archive_name, NULL, 16);;
@@ -543,35 +515,26 @@ send_new_message(char         *p_msg_name,
                  sizeof(unsigned int) +
                  sizeof(unsigned int)) = file_size_to_send;
 # else
-      *(off_t *)(fifo_buffer + sizeof(time_t)) = file_size_to_send;
-      *(unsigned int *)(fifo_buffer + sizeof(time_t) +
-                        sizeof(off_t)) = job_id;
-      *(unsigned int *)(fifo_buffer + sizeof(time_t) + sizeof(off_t) +
-                        sizeof(unsigned int)) = split_job_counter;
-      *(unsigned int *)(fifo_buffer + sizeof(time_t) + sizeof(off_t) +
-                        sizeof(unsigned int) +
-                        sizeof(unsigned int)) = files_to_send;
+      *(off_t*) (fifo_buffer + sizeof(time_t)) = file_size_to_send;
+      *(unsigned int*) (fifo_buffer + sizeof(time_t) + sizeof(off_t)) = job_id;
+      *(unsigned int*) (fifo_buffer + sizeof(time_t) + sizeof(off_t) + sizeof(unsigned int)) = split_job_counter;
+      *(unsigned int*) (fifo_buffer + sizeof(time_t) + sizeof(off_t) + sizeof(unsigned int) + sizeof(unsigned int)) =
+               files_to_send;
 # endif
-      *(unsigned int *)(fifo_buffer + sizeof(time_t) + sizeof(unsigned int) +
-                        sizeof(unsigned int) + sizeof(unsigned int) +
-                        sizeof(off_t)) = unique_number;
-      *(unsigned short *)(fifo_buffer + sizeof(time_t) + sizeof(unsigned int) +
-                          sizeof(unsigned int) + sizeof(unsigned int) +
-                          sizeof(off_t) + sizeof(unsigned int)) = dir_no;
-      *(char *)(fifo_buffer + sizeof(time_t) + sizeof(unsigned int) +
-                sizeof(unsigned int) + sizeof(unsigned int) + sizeof(off_t) +
-                sizeof(unsigned int) + sizeof(unsigned short)) = priority;
-      *(char *)(fifo_buffer + sizeof(time_t) + sizeof(unsigned int) +
-                sizeof(unsigned int) + sizeof(unsigned int) + sizeof(off_t) +
-                sizeof(unsigned int) + sizeof(unsigned short) +
-                sizeof(char)) = SHOW_OLOG_NO;
+      *(unsigned int*) (fifo_buffer + sizeof(time_t) + sizeof(unsigned int) + sizeof(unsigned int)
+               + sizeof(unsigned int) + sizeof(off_t)) = unique_number;
+      *(unsigned short*) (fifo_buffer + sizeof(time_t) + sizeof(unsigned int) + sizeof(unsigned int)
+               + sizeof(unsigned int) + sizeof(off_t) + sizeof(unsigned int)) = dir_no;
+      *(char*) (fifo_buffer + sizeof(time_t) + sizeof(unsigned int) + sizeof(unsigned int) + sizeof(unsigned int)
+               + sizeof(off_t) + sizeof(unsigned int) + sizeof(unsigned short)) = priority;
+      *(char*) (fifo_buffer + sizeof(time_t) + sizeof(unsigned int) + sizeof(unsigned int) + sizeof(unsigned int)
+               + sizeof(off_t) + sizeof(unsigned int) + sizeof(unsigned short) + sizeof(char)) = SHOW_OLOG_NO;
 #endif
 
       /* Send the message. */
       if (write(fd, fifo_buffer, MAX_BIN_MSG_LENGTH) != MAX_BIN_MSG_LENGTH)
       {
-         (void)fprintf(stderr, "Could not write to %s : %s (%s %d)",
-                    msg_fifo, strerror(errno), __FILE__, __LINE__);
+         (void) fprintf(stderr, "Could not write to %s : %s (%s %d)", msg_fifo, strerror(errno), __FILE__, __LINE__);
          ret = INCORRECT;
       }
       else
@@ -588,14 +551,12 @@ send_new_message(char         *p_msg_name,
 #endif
       if (close(fd) == -1)
       {
-         (void)fprintf(stderr, "Failed to close() %s : %s (%s %d)",
-                    msg_fifo, strerror(errno), __FILE__, __LINE__);
+         (void) fprintf(stderr, "Failed to close() %s : %s (%s %d)", msg_fifo, strerror(errno), __FILE__, __LINE__);
       }
    }
 
-   return(ret);
+   return (ret);
 }
-
 
 /*++++++++++++++++++++++++++++++ get_file() +++++++++++++++++++++++++++++*/
 /*                               ----------                              */
@@ -605,40 +566,35 @@ send_new_message(char         *p_msg_name,
 /*              it will try to copy the file (ie overwrite it in case    */
 /*              errno is EEXIST).                                        */
 /*+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++*/
-static int
-get_file(char *dest_dir, char *p_dest_dir_end, off_t *file_size)
+static int get_file(char *dest_dir, char *p_dest_dir_end, off_t *file_size)
 {
-   (void)strcpy(p_dest_dir_end, p_file_name);
+   (void) strcpy(p_dest_dir_end, p_file_name);
    if (eaccess(archive_dir, W_OK) == 0)
    {
       if (link(archive_dir, dest_dir) < 0)
       {
          switch (errno)
          {
-            case EEXIST : /* File already exists. Overwrite it. */
-                          overwrite++;
-                          /* NOTE: Falling through! */
-            case EXDEV  : /* File systems differ. */
-                          if (copy_file(archive_dir, dest_dir, NULL) < 0)
-                          {
-                             (void)fprintf(stdout,
-                                           "Failed to copy %s to %s (%s %d)\n",
-                                           archive_dir, dest_dir,
-                                           __FILE__, __LINE__);
-                             return(INCORRECT);
-                          }
-                          break;
-            default:      /* All other errors go here. */
-                          (void)fprintf(stdout,
-                                        "Failed to link() %s to %s : %s (%s %d)\n",
-                                        archive_dir, dest_dir, strerror(errno),
-                                        __FILE__, __LINE__);
-                          return(INCORRECT);
+         case EEXIST: /* File already exists. Overwrite it. */
+            overwrite++;
+            /* NOTE: Falling through! */
+         case EXDEV: /* File systems differ. */
+            if (copy_file(archive_dir, dest_dir, NULL) < 0)
+            {
+               (void) fprintf(stdout, "Failed to copy %s to %s (%s %d)\n", archive_dir, dest_dir,
+               __FILE__, __LINE__);
+               return (INCORRECT);
+            }
+            break;
+         default: /* All other errors go here. */
+            (void) fprintf(stdout, "Failed to link() %s to %s : %s (%s %d)\n", archive_dir, dest_dir, strerror(errno),
+            __FILE__, __LINE__);
+            return (INCORRECT);
          }
       }
       else /* We must update the file time or else when age limit is */
-           /* set the files will be deleted by process sf_xxx before */
-           /* being send.                                            */
+      /* set the files will be deleted by process sf_xxx before */
+      /* being send.                                            */
       {
          struct stat stat_buf;
 
@@ -649,15 +605,15 @@ get_file(char *dest_dir, char *p_dest_dir_end, off_t *file_size)
              * to do this with al lot of files your screen will be filled
              * with lots of error messages.
              */
-            (void)fprintf(stdout, "Failed to set utime() of %s : %s (%s %d)\n",
-                          dest_dir, strerror(errno), __FILE__, __LINE__);
+            (void) fprintf(stdout, "Failed to set utime() of %s : %s (%s %d)\n", dest_dir, strerror(errno), __FILE__,
+            __LINE__);
          }
 
          if (stat(dest_dir, &stat_buf) == -1)
          {
-            (void)fprintf(stdout, "Failed to stat() `%s' : %s (%s %d)\n",
-                          dest_dir, strerror(errno), __FILE__, __LINE__);
-            return(INCORRECT);
+            (void) fprintf(stdout, "Failed to stat() `%s' : %s (%s %d)\n", dest_dir, strerror(errno), __FILE__,
+            __LINE__);
+            return (INCORRECT);
          }
          else
          {
@@ -678,9 +634,9 @@ get_file(char *dest_dir, char *p_dest_dir_end, off_t *file_size)
          if ((from_fd = open(archive_dir, O_RDONLY)) == -1)
          {
             /* File is not in archive dir. */
-            (void)fprintf(stdout, "Failed to open() `%s' : %s (%s %d)\n",
-                          archive_dir, strerror(errno), __FILE__, __LINE__);
-            return(INCORRECT);
+            (void) fprintf(stdout, "Failed to open() `%s' : %s (%s %d)\n", archive_dir, strerror(errno), __FILE__,
+            __LINE__);
+            return (INCORRECT);
          }
          else
          {
@@ -688,84 +644,81 @@ get_file(char *dest_dir, char *p_dest_dir_end, off_t *file_size)
 
             if (fstat(from_fd, &stat_buf) == -1)
             {
-               (void)fprintf(stderr, "Failed to fstat() %s : %s (%s %d)\n",
-                             archive_dir, strerror(errno), __FILE__, __LINE__);
-               (void)close(from_fd);
-               return(INCORRECT);
+               (void) fprintf(stderr, "Failed to fstat() %s : %s (%s %d)\n", archive_dir, strerror(errno), __FILE__,
+               __LINE__);
+               (void) close(from_fd);
+               return (INCORRECT);
             }
             else
             {
                int to_fd;
 
-               (void)unlink(dest_dir);
-               if ((to_fd = open(dest_dir, O_WRONLY | O_CREAT | O_TRUNC,
-                                 stat_buf.st_mode)) == -1)
+               (void) unlink(dest_dir);
+               if ((to_fd = open(dest_dir, O_WRONLY | O_CREAT | O_TRUNC, stat_buf.st_mode)) == -1)
                {
-                  (void)fprintf(stderr, "Failed to open() %s : %s (%s %d)\n",
-                                dest_dir, strerror(errno), __FILE__, __LINE__);
-                  (void)close(from_fd);
-                  return(INCORRECT);
+                  (void) fprintf(stderr, "Failed to open() %s : %s (%s %d)\n", dest_dir, strerror(errno), __FILE__,
+                  __LINE__);
+                  (void) close(from_fd);
+                  return (INCORRECT);
                }
                else
                {
                   if (stat_buf.st_size > 0)
                   {
-                     int  bytes_buffered;
+                     int bytes_buffered;
                      char *buffer;
 
                      if ((buffer = malloc(stat_buf.st_blksize)) == NULL)
                      {
-                        (void)fprintf(stderr,
-                                      "malloc() error : %s (%s %d)\n",
-                                      strerror(errno), __FILE__, __LINE__);
-                        (void)close(from_fd); (void)close(to_fd);
-                        return(INCORRECT);
+                        (void) fprintf(stderr, "malloc() error : %s (%s %d)\n", strerror(errno), __FILE__, __LINE__);
+                        (void) close(from_fd);
+                        (void) close(to_fd);
+                        return (INCORRECT);
                      }
 
                      do
                      {
-                        if ((bytes_buffered = read(from_fd, buffer,
-                                                   stat_buf.st_blksize)) == -1)
+                        if ((bytes_buffered = read(from_fd, buffer, stat_buf.st_blksize)) == -1)
                         {
-                           (void)fprintf(stderr,
-                                         "Failed to read() from %s : %s (%s %d)\n",
-                                         archive_dir, strerror(errno),
-                                         __FILE__, __LINE__);
+                           (void) fprintf(stderr, "Failed to read() from %s : %s (%s %d)\n", archive_dir,
+                                    strerror(errno),
+                                    __FILE__, __LINE__);
                            free(buffer);
-                           (void)close(from_fd); (void)close(to_fd);
-                           return(INCORRECT);
+                           (void) close(from_fd);
+                           (void) close(to_fd);
+                           return (INCORRECT);
                         }
                         if (bytes_buffered > 0)
                         {
                            if (write(to_fd, buffer, bytes_buffered) != bytes_buffered)
                            {
-                              (void)fprintf(stderr,
-                                            "Failed to write() to %s : %s (%s %d)\n",
-                                            dest_dir, strerror(errno),
-                                            __FILE__, __LINE__);
+                              (void) fprintf(stderr, "Failed to write() to %s : %s (%s %d)\n", dest_dir,
+                                       strerror(errno),
+                                       __FILE__, __LINE__);
                               free(buffer);
-                              (void)close(from_fd); (void)close(to_fd);
-                              return(INCORRECT);
+                              (void) close(from_fd);
+                              (void) close(to_fd);
+                              return (INCORRECT);
                            }
                         }
-                     } while (bytes_buffered == stat_buf.st_blksize);
+                     }
+                     while (bytes_buffered == stat_buf.st_blksize);
                      free(buffer);
                   }
-                  (void)close(to_fd);
+                  (void) close(to_fd);
                   *file_size = stat_buf.st_size;
                }
             }
-            (void)close(from_fd);
+            (void) close(from_fd);
          }
       }
       else
       {
          if (link(archive_dir, dest_dir) < 0)
          {
-            (void)fprintf(stdout, "Failed to link() %s to %s : %s (%s %d)\n",
-                          archive_dir, dest_dir, strerror(errno),
-                          __FILE__, __LINE__);
-            return(INCORRECT);
+            (void) fprintf(stdout, "Failed to link() %s to %s : %s (%s %d)\n", archive_dir, dest_dir, strerror(errno),
+            __FILE__, __LINE__);
+            return (INCORRECT);
          }
          else
          {
@@ -779,9 +732,9 @@ get_file(char *dest_dir, char *p_dest_dir_end, off_t *file_size)
              */
             if (stat(dest_dir, &stat_buf) == -1)
             {
-               (void)fprintf(stdout, "Failed to stat() `%s' : %s (%s %d)\n",
-                             dest_dir, strerror(errno), __FILE__, __LINE__);
-               return(INCORRECT);
+               (void) fprintf(stdout, "Failed to stat() `%s' : %s (%s %d)\n", dest_dir, strerror(errno), __FILE__,
+               __LINE__);
+               return (INCORRECT);
             }
             else
             {
@@ -791,26 +744,21 @@ get_file(char *dest_dir, char *p_dest_dir_end, off_t *file_size)
       }
    }
 
-   return(SUCCESS);
+   return (SUCCESS);
 }
 
-
 /*++++++++++++++++++++++++ get_afd_config_value() +++++++++++++++++++++++*/
-static void
-get_afd_config_value(void)
+static void get_afd_config_value(void)
 {
-   char *buffer,
-        config_file[MAX_PATH_LENGTH];
+   char *buffer, config_file[MAX_PATH_LENGTH];
 
-   (void)sprintf(config_file, "%s%s%s",
-                 p_work_dir, ETC_DIR, AFD_CONFIG_FILE);
-   if ((eaccess(config_file, F_OK) == 0) &&
-       (read_file_no_cr(config_file, &buffer, YES, __FILE__, __LINE__) != INCORRECT))
+   (void) sprintf(config_file, "%s%s%s", p_work_dir, ETC_DIR, AFD_CONFIG_FILE);
+   if ((eaccess(config_file, F_OK) == 0)
+            && (read_file_no_cr(config_file, &buffer, YES, __FILE__, __LINE__) != INCORRECT))
    {
       char value[MAX_INT_LENGTH];
 
-      if (get_definition(buffer, MAX_COPIED_FILES_DEF,
-                         value, MAX_INT_LENGTH) != NULL)
+      if (get_definition(buffer, MAX_COPIED_FILES_DEF, value, MAX_INT_LENGTH) != NULL)
       {
          max_copied_files = atoi(value);
          if ((max_copied_files < 1) || (max_copied_files > 10240))
@@ -833,14 +781,10 @@ get_afd_config_value(void)
 }
 
 /*$$$$$$$$$$$$$$$$$$$$$$$$$$$$$ reset_fsa() $$$$$$$$$$$$$$$$$$$$$$$$$$$$$*/
-int
-main(int argc, char *argv[])
+int main(int argc, char *argv[])
 {
-   int  arg_i = 1,
-        no_arc = 0,
-        max_files = 10;
-   char **arc_files = NULL,
-        work_dir[MAX_PATH_LENGTH];
+   int arg_i = 1, no_arc = 0, max_files = 10;
+   char **arc_files = NULL, work_dir[MAX_PATH_LENGTH];
 
    if (get_afd_path(&argc, argv, work_dir) < 0)
    {
@@ -856,14 +800,14 @@ main(int argc, char *argv[])
       }
       if ((arc_files = calloc(max_files, sizeof(char*))) == NULL)
       {
-         (void)fprintf(stderr, "calloc() error : %s (%s %d)",
-                    strerror(errno), __FILE__, __LINE__);
+         (void) fprintf(stderr, "calloc() error : %s (%s %d)", strerror(errno), __FILE__, __LINE__);
          return -1;
       }
       while ((arg_i < argc) && (no_arc < max_files))
       {
-         no_arc++;
          arc_files[no_arc] = argv[arg_i];
+         no_arc++;
+         arg_i++;
       }
       if (no_arc != 0)
       {
@@ -879,13 +823,9 @@ main(int argc, char *argv[])
    exit(SUCCESS);
 }
 
-
 /*+++++++++++++++++++++++++++++++ usage() ++++++++++++++++++++++++++++++*/
-static void
-usage(char *progname)
+static void usage(char *progname)
 {
-   (void)fprintf(stderr,
-                 _("SYNTAX  : %s [-w working directory] archived-file [archived-file ...]\n"),
-                 progname);
+   (void) fprintf(stderr, _("SYNTAX  : %s [-w working directory] archived-file [archived-file ...]\n"), progname);
    return;
 }
