@@ -54,7 +54,8 @@ bin_PROGRAMS                      += bin/afdcmd\
                                      bin/grib2wmo\
                                      bin/jid_view\
                                      bin/set_pw\
-                                     bin/udc
+                                     bin/udc\
+                                     bin/resend_files_cmd
 sbin_PROGRAMS                     += sbin/cache_spy\
                                      sbin/convert_fsa\
                                      sbin/convert_stat\
@@ -207,6 +208,8 @@ sbin_view_ls_data_SOURCES          = src/tools/view_ls_data.c
 sbin_view_ls_data_LDADD            = lib/libafd.a
 bin_watch_dir_SOURCES              = src/tools/watch_dir.c
 bin_watch_dir_LDADD                = lib/libafd.a
+bin_resend_files_cmd_SOURCES       = src/tools/resend_files_cmd.c
+bin_resend_files_cmd_LDADD         = lib/libafd.a
 
 install-exec-hook-tools:
 if WITH_SETUID_PROGS
