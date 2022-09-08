@@ -19,28 +19,23 @@
 
 #include "afddefs.h"
 
-DESCR__S_M3
+DESCR__S_M1
 /*
  ** NAME
- **   resend_files - resends files from the AFD archive
+ **   resend_files_cmd - resends files from the AFD archive
  **
  ** SYNOPSIS
- **   void resend_files(int no_selected, int *select_list)
+ **   resend_files_cmd [-w <working directory>] archived-file [archived-file ...]
  **
  ** DESCRIPTION
- **   resend_files() will resend all files selected in the show_olog
- **   dialog. Only files that have been archived will be resend.
- **   Since the selected list can be rather long, this function
- **   will try to optimise the resending of files by collecting
- **   all jobs in a list with the same ID and generate a single
- **   message for all of them. If this is not done, far to many
- **   messages will be generated.
+ **   resend_files_cmd will resend all files given as parameter.
+ **   Use only files that have been archived!
  **
- **   Every time a complete list with the same job ID has been
- **   resend, will cause this function to deselect those items.
+ **   The archived file shall be given as full relative path from
+ **   "afd_work_dir/archive".
  **
  ** RETURN VALUES
- **   None.
+ **   SUCCESS on normal exit and INCORRECT when an error has occurred.
  **
  ** AUTHOR
  **   H.Kiehl
@@ -50,9 +45,12 @@ DESCR__S_M3
  **   10.02.1998 H.Kiehl Adapted to new message form.
  **   24.09.2004 H.Kiehl Added split job counter.
  **   16.01.2005 H.Kiehl Adapted to new message names.
+ **   08.09.2022 A.Maul  Re-write the show_olog function and add main(),
+ **                      to use resend from command-line instead from
+ **                      show_olog dialog.
  **
  */
-DESCR__E_M3
+DESCR__E_M1
 
 #include <stdio.h>
 #include <string.h>         /* strerror(), strcmp(), strcpy(), strcat()  */
@@ -74,6 +72,8 @@ DESCR__E_M3
 #define NOT_IN_ARCHIVE           13
 #define SEND_LIMIT_REACHED       14
 /* NOTE: DONE is defined in afddefs.h as 3. */
+
+#define DEFAULT_PRIORITY 		 9
 
 /* #define WITH_RESEND_DEBUG 1 */
 
@@ -97,8 +97,7 @@ const char              *sys_log_name = SYSTEM_LOG_FIFO;
 
 /* Local global variables. */
 static int              max_copied_files,
-                        overwrite,
-                        default_priority = 9;
+                        overwrite;
 static char             archive_dir[MAX_PATH_LENGTH],
                         *p_file_name,
                         *p_archive_name,
@@ -131,29 +130,30 @@ resend_files(int no_selected, char **select_list)
 #ifdef MULTI_FS_SUPPORT
    int                added_fs_id;
 #endif
-   int                  i,
-                        k,
-                        total_no_of_items,
-                        length = 0,
-                        to_do = 0, /* Number still to be done. */
-                        no_done = 0, /* Number done.             */
-                        not_found = 0,
-                        not_archived = 0,
-                        not_in_archive = 0,
-                        select_done = 0,
-                        *unique_number;
-   unsigned int         current_job_id = 0,
-                        last_job_id = 0,
-                        split_job_counter;
-   time_t               creation_time = 0;
-   off_t                file_size = 0,
-                        total_file_size;
-   static int           user_limit = 0;
-   char                 user_message[256];
-   char                 *jobid_buf_start = NULL,
-                        *jobid_buffer = NULL,
-                        *foo;
-   struct resend_list   *rl;
+   int                i,
+                      k,
+                      total_no_of_items,
+                      length = 0,
+                      to_do = 0,    /* Number still to be done. */
+                      no_done = 0,  /* Number done.             */
+                      not_found = 0,
+                      not_archived = 0,
+                      not_in_archive = 0,
+                      select_done = 0,
+                      *select_done_list,
+                      *unique_number;
+   unsigned int       current_job_id = 0,
+                      last_job_id = 0,
+                      split_job_counter;
+   time_t             creation_time = 0;
+   off_t              file_size = 0,
+                      total_file_size;
+   static int         user_limit = 0;
+   char               user_message[256];
+   char               *jobid_buf_start = NULL,
+                      *jobid_buffer = NULL,
+                      *foo;
+   struct resend_list *rl;
 
    overwrite = 0;
    dest_dir[0] = '\0';
@@ -171,6 +171,9 @@ resend_files(int no_selected, char **select_list)
       free((void*) rl);
       return;
    }
+
+   /* See how many files we may copy in one go. */
+   get_afd_config_value();
 
    /* Prepare the archive directory name. */
    p_archive_name = archive_dir + sprintf(archive_dir, "%s%s/",
@@ -250,7 +253,16 @@ resend_files(int no_selected, char **select_list)
          if ((rl[k].status == FILE_PENDING) &&
              (current_job_id == rl[k].job_id))
          {
-
+            /* stattdessen mit stat() auf existenz prüfen?
+             
+            if (get_archive_data(rl[k].pos, rl[k].file_no) < 0)
+            {
+               rl[k].status = NOT_IN_ARCHIVE;
+               not_in_archive++;
+            }
+            else
+            {
+            */
 #ifdef MULTI_FS_SUPPORT
             if (added_fs_id == NO)
             {
@@ -284,8 +296,12 @@ resend_files(int no_selected, char **select_list)
                {
                   int m;
 
-                  if (send_new_message(p_msg_name, creation_time, (unsigned int) *unique_number, split_job_counter,
-                           current_job_id, default_priority, max_copied_files, total_file_size) < 0)
+                  if (send_new_message(p_msg_name, creation_time,
+                                       (unsigned int)*unique_number,
+                                       split_job_counter,
+                                       current_job_id, DEFAULT_PRIORITY,
+                                       max_copied_files,
+                                       total_file_size) < 0)
                   {
                      (void) fprintf(stderr, "Failed to create message : (%s %d)",
                      __FILE__, __LINE__);
@@ -301,7 +317,7 @@ resend_files(int no_selected, char **select_list)
                creation_time = time(NULL);
                *p_msg_name = '\0';
                split_job_counter = 0;
-               if (create_name(dest_dir, strlen(dest_dir), default_priority, creation_time, current_job_id,
+               if (create_name(dest_dir, strlen(dest_dir), DEFAULT_PRIORITY, creation_time, current_job_id,
                         &split_job_counter, unique_number, p_msg_name,
                         MAX_PATH_LENGTH - (p_msg_name - dest_dir), counter_fd) < 0)
                {
@@ -343,7 +359,7 @@ resend_files(int no_selected, char **select_list)
 
          if (send_new_message(p_msg_name, creation_time,
          					  (unsigned int)*unique_number,
-         					  split_job_counter, last_job_id, default_priority,
+         					  split_job_counter, last_job_id, DEFAULT_PRIORITY,
                               select_done, total_file_size) < 0)
          {
             (void) fprintf(stderr, "Failed to create message : (%s %d)",
@@ -836,39 +852,21 @@ main(int argc, char *argv[])
 {
    int                  arg_i = 1,
                         no_arc = 0;
-   char                 **arc_files = NULL,
-                        work_dir[MAX_PATH_LENGTH];
 
-   if (get_afd_path(&argc, argv, work_dir) < 0)
+   if (get_afd_path(&argc, argv, p_work_dir) < 0)
    {
       exit(INCORRECT);
    }
-   p_work_dir = work_dir;
 
-   if (argc >= 2)
+   if (argc > arg_i)
    {
-      /* See how many files we may copy in one go. */
-      get_afd_config_value();
-
       if ((argv[1][0] == '-') && (argv[1][1] == 'w'))
       {
          arg_i += 2;
       }
-      if ((arc_files = calloc(max_copied_files, sizeof(char*))) == NULL)
+      if (argc > arg_i)
       {
-         (void) fprintf(stderr, "calloc() error : %s (%s %d)", strerror(errno), __FILE__, __LINE__);
-         return -1;
-      }
-      while ((arg_i < argc) && (no_arc < max_copied_files))
-      {
-         arc_files[no_arc] = argv[arg_i];
-         no_arc++;
-         arg_i++;
-      }
-      if (no_arc != 0)
-      {
-         resend_files(no_arc, arc_files);
-         free(arc_files);
+         resend_files(argc - arg_i, argv + arg_i);
       }
    }
    else
