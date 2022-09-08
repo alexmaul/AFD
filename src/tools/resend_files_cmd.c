@@ -256,100 +256,98 @@ resend_files(int no_selected, char **select_list)
              (current_job_id == rl[k].job_id))
          {
             (void)strcpy(p_archive_name, rl[k].archive_name);
-            /* stattdessen mit stat() auf existenz prüfen?
-             
-            if (get_archive_data(rl[k].pos, rl[k].file_no) < 0)
+            if (eaccess(archive_dir, R_OK) == 0)
             {
                rl[k].status = NOT_IN_ARCHIVE;
                not_in_archive++;
             }
             else
             {
-            */
 #ifdef MULTI_FS_SUPPORT
-            if (added_fs_id == NO)
-            {
-               int m = 0;
+               if (added_fs_id == NO)
+               {
+                  int m = 0;
 
-               /* Copy the filesystem ID to dest_dir. */
-               while ((*(p_archive_name + m) != '/') &&
-                      (*(p_archive_name + m) != '\0') &&
-                      (m < MAX_INT_HEX_LENGTH))
-               {
-                  *(p_orig_msg_name + m) = *(p_archive_name + m);
-                  m++;
-               }
-               if ((m == MAX_INT_HEX_LENGTH) ||
-                   (*(p_archive_name + m) == '\0'))
-               {
-                  (void)fprintf(stderr,
-                             "Failed to locate filesystem ID in `%s' : (%s %d)",
-                             p_archive_name, __FILE__, __LINE__);
-                  return;
-               }
-               *(p_orig_msg_name + m) = '/';
-               p_msg_name = p_dest_dir_end = p_orig_msg_name + m + 1;
-               added_fs_id = YES;
-            }
-#endif
-            if ((select_done % max_copied_files) == 0)
-            {
-               /* Copy a message so FD can pick up the job. */
-               if (select_done != 0)
-               {
-                  int m;
-
-                  if (send_new_message(p_msg_name, creation_time,
-                                       (unsigned int)*unique_number,
-                                       split_job_counter,
-                                       current_job_id, DEFAULT_PRIORITY,
-                                       max_copied_files,
-                                       total_file_size) < 0)
+                  /* Copy the filesystem ID to dest_dir. */
+                  while ((*(p_archive_name + m) != '/') &&
+                         (*(p_archive_name + m) != '\0') &&
+                         (m < MAX_INT_HEX_LENGTH))
                   {
-                     (void) fprintf(stderr, "Failed to create message : (%s %d)",
+                     *(p_orig_msg_name + m) = *(p_archive_name + m);
+                     m++;
+                  }
+                  if ((m == MAX_INT_HEX_LENGTH) ||
+                      (*(p_archive_name + m) == '\0'))
+                  {
+                     (void)fprintf(stderr,
+                                "Failed to locate filesystem ID in `%s' : (%s %d)",
+                                p_archive_name, __FILE__, __LINE__);
+                     return;
+                  }
+                  *(p_orig_msg_name + m) = '/';
+                  p_msg_name = p_dest_dir_end = p_orig_msg_name + m + 1;
+                  added_fs_id = YES;
+               }
+#endif
+               if ((select_done % max_copied_files) == 0)
+               {
+                  /* Copy a message so FD can pick up the job. */
+                  if (select_done != 0)
+                  {
+                     int m;
+
+                     if (send_new_message(p_msg_name, creation_time,
+                                          (unsigned int)*unique_number,
+                                          split_job_counter,
+                                          current_job_id, DEFAULT_PRIORITY,
+                                          max_copied_files,
+                                          total_file_size) < 0)
+                     {
+                        (void) fprintf(stderr, "Failed to create message : (%s %d)",
+                        __FILE__, __LINE__);
+                        close_counter_file(counter_fd, &unique_number);
+                        return;
+                     }
+
+                     select_done = 0;
+                     total_file_size = 0;
+                  }
+
+                  /* Create a new directory. */
+                  creation_time = time(NULL);
+                  *p_msg_name = '\0';
+                  split_job_counter = 0;
+                  if (create_name(dest_dir, strlen(dest_dir), DEFAULT_PRIORITY, creation_time, current_job_id,
+                           &split_job_counter, unique_number, p_msg_name,
+                           MAX_PATH_LENGTH - (p_msg_name - dest_dir), counter_fd) < 0)
+                  {
+                     (void) fprintf(stderr, "Failed to create a unique directory : (%s %d)",
                      __FILE__, __LINE__);
+                     free((void*) rl);
                      close_counter_file(counter_fd, &unique_number);
                      return;
                   }
-
-                  select_done = 0;
-                  total_file_size = 0;
+                  p_dest_dir_end = p_msg_name;
+                  while (*p_dest_dir_end != '\0')
+                  {
+                     p_dest_dir_end++;
+                  }
+                  *(p_dest_dir_end++) = '/';
+                  *p_dest_dir_end = '\0';
                }
-
-               /* Create a new directory. */
-               creation_time = time(NULL);
-               *p_msg_name = '\0';
-               split_job_counter = 0;
-               if (create_name(dest_dir, strlen(dest_dir), DEFAULT_PRIORITY, creation_time, current_job_id,
-                        &split_job_counter, unique_number, p_msg_name,
-                        MAX_PATH_LENGTH - (p_msg_name - dest_dir), counter_fd) < 0)
+               if (get_file(dest_dir, p_dest_dir_end, &file_size) < 0)
                {
-                  (void) fprintf(stderr, "Failed to create a unique directory : (%s %d)",
-                  __FILE__, __LINE__);
-                  free((void*) rl);
-                  close_counter_file(counter_fd, &unique_number);
-                  return;
+                  rl[k].status = NOT_IN_ARCHIVE;
+                  not_in_archive++;
                }
-               p_dest_dir_end = p_msg_name;
-               while (*p_dest_dir_end != '\0')
+               else
                {
-                  p_dest_dir_end++;
+                  rl[k].status = DONE;
+                  no_done++;
+                  select_done++;
+                  total_file_size += file_size;
+                  last_job_id = current_job_id;
                }
-               *(p_dest_dir_end++) = '/';
-               *p_dest_dir_end = '\0';
-            }
-            if (get_file(dest_dir, p_dest_dir_end, &file_size) < 0)
-            {
-               rl[k].status = NOT_IN_ARCHIVE;
-               not_in_archive++;
-            }
-            else
-            {
-               rl[k].status = DONE;
-               no_done++;
-               select_done++;
-               total_file_size += file_size;
-               last_job_id = current_job_id;
             }
             to_do--;
          }
