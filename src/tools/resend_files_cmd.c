@@ -110,8 +110,9 @@ static char             archive_dir[MAX_PATH_LENGTH],
 
 struct resend_list
 {
-   unsigned int job_id;
-   char status; /* DONE - file has been resend. */
+   unsigned int 		job_id;
+   char 				*archive_name;
+   char 				status; /* DONE - file has been resend. */
 };
 
 /* Local function prototypes. */
@@ -217,6 +218,7 @@ resend_files(int no_selected, char **select_list)
             ;
       }
       rl[i].job_id = (unsigned int) strtoul(jobid_buffer, NULL, 16);
+      rl[i].archive_name = select_list[i];
       rl[i].status = FILE_PENDING;
       to_do++;
    }
@@ -253,6 +255,7 @@ resend_files(int no_selected, char **select_list)
          if ((rl[k].status == FILE_PENDING) &&
              (current_job_id == rl[k].job_id))
          {
+            (void)strcpy(p_archive_name, rl[k].archive_name);
             /* stattdessen mit stat() auf existenz prüfen?
              
             if (get_archive_data(rl[k].pos, rl[k].file_no) < 0)
