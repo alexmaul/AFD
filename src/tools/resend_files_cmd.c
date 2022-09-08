@@ -852,11 +852,13 @@ main(int argc, char *argv[])
 {
    int                  arg_i = 1,
                         no_arc = 0;
+   char                 work_dir[MAX_PATH_LENGTH];
 
-   if (get_afd_path(&argc, argv, p_work_dir) < 0)
+   if (get_afd_path(&argc, argv, work_dir) < 0)
    {
       exit(INCORRECT);
    }
+   p_work_dir = work_dir;
 
    if (argc > arg_i)
    {
