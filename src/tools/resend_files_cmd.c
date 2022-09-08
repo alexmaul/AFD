@@ -160,14 +160,14 @@ resend_files(int no_selected, char **select_list)
    dest_dir[0] = '\0';
    if ((rl = calloc(no_selected, sizeof(struct resend_list))) == NULL)
    {
-      (void) fprintf(stderr, "calloc() error : %s (%s %d)", strerror(errno), __FILE__, __LINE__);
+      (void) fprintf(stderr, "calloc() error : %s (%s %d)\n", strerror(errno), __FILE__, __LINE__);
       return;
    }
 
    /* Open counter file, so we can create new unique name. */
    if ((counter_fd = open_counter_file(COUNTER_FILE, &unique_number)) < 0)
    {
-      (void) fprintf(stderr, "Failed to open counter file. (%s %d)",
+      (void) fprintf(stderr, "Failed to open counter file. (%s %d)\n",
       __FILE__, __LINE__);
       free((void*) rl);
       return;
@@ -188,7 +188,7 @@ resend_files(int no_selected, char **select_list)
    /* Get the fsa_id and no of host of the FSA. */
    if (fsa_attach("resend_files") != SUCCESS)
    {
-      (void) fprintf(stderr, "Failed to attach to FSA. (%s %d)",
+      (void) fprintf(stderr, "Failed to attach to FSA. (%s %d)\n",
       __FILE__, __LINE__);
       return;
    }
@@ -303,7 +303,7 @@ resend_files(int no_selected, char **select_list)
                                           max_copied_files,
                                           total_file_size) < 0)
                      {
-                        (void) fprintf(stderr, "Failed to create message : (%s %d)",
+                        (void) fprintf(stderr, "Failed to create message : (%s %d)\n",
                         __FILE__, __LINE__);
                         close_counter_file(counter_fd, &unique_number);
                         return;
@@ -321,7 +321,7 @@ resend_files(int no_selected, char **select_list)
                            &split_job_counter, unique_number, p_msg_name,
                            MAX_PATH_LENGTH - (p_msg_name - dest_dir), counter_fd) < 0)
                   {
-                     (void) fprintf(stderr, "Failed to create a unique directory : (%s %d)",
+                     (void) fprintf(stderr, "Failed to create a unique directory : (%s %d)\n",
                      __FILE__, __LINE__);
                      free((void*) rl);
                      close_counter_file(counter_fd, &unique_number);
@@ -363,7 +363,7 @@ resend_files(int no_selected, char **select_list)
          					  split_job_counter, last_job_id, DEFAULT_PRIORITY,
                               select_done, total_file_size) < 0)
          {
-            (void) fprintf(stderr, "Failed to create message : (%s %d)",
+            (void) fprintf(stderr, "Failed to create message : (%s %d)\n",
             __FILE__, __LINE__);
             close_counter_file(counter_fd, &unique_number);
             return;
@@ -441,7 +441,7 @@ resend_files(int no_selected, char **select_list)
          length = sprintf(user_message, "%d not found", not_found);
       }
    }
-   (void) fprintf(stderr, user_message);
+   (void) fprintf(stderr, "%s\n", user_message);
 
    free((void*) rl);
 
@@ -449,7 +449,7 @@ resend_files(int no_selected, char **select_list)
 
    if (fsa_detach(NO) < 0)
    {
-      (void) fprintf(stderr, "Failed to detach from FSA. (%s %d)",
+      (void) fprintf(stderr, "Failed to detach from FSA. (%s %d)\n",
       __FILE__, __LINE__);
    }
 
@@ -486,7 +486,7 @@ send_new_message(char         *p_msg_name,
    }
    if (*ptr != '/')
    {
-      (void) fprintf(stderr, "Unable to find directory number in `%s' (%s %d)", p_msg_name, __FILE__, __LINE__);
+      (void) fprintf(stderr, "Unable to find directory number in `%s' (%s %d)\n", p_msg_name, __FILE__, __LINE__);
       return (INCORRECT);
    }
    dir_no = (unsigned short)strtoul(ptr + 1, NULL, 16);
@@ -502,7 +502,7 @@ send_new_message(char         *p_msg_name,
    if ((fd = open(msg_fifo, O_RDWR)) == -1)
 #endif
    {
-      (void) fprintf(stderr, "Could not open %s : %s (%s %d)", msg_fifo, strerror(errno), __FILE__, __LINE__);
+      (void) fprintf(stderr, "Could not open %s : %s (%s %d)\n", msg_fifo, strerror(errno), __FILE__, __LINE__);
       ret = INCORRECT;
    }
    else
@@ -588,7 +588,7 @@ send_new_message(char         *p_msg_name,
       /* Send the message. */
       if (write(fd, fifo_buffer, MAX_BIN_MSG_LENGTH) != MAX_BIN_MSG_LENGTH)
       {
-         (void) fprintf(stderr, "Could not write to %s : %s (%s %d)", msg_fifo, strerror(errno), __FILE__, __LINE__);
+         (void) fprintf(stderr, "Could not write to %s : %s (%s %d)\n", msg_fifo, strerror(errno), __FILE__, __LINE__);
          ret = INCORRECT;
       }
       else
@@ -599,13 +599,13 @@ send_new_message(char         *p_msg_name,
 #ifdef WITHOUT_FIFO_RW_SUPPORT
       if (close(readfd) == -1)
       {
-         (void)fprintf(stderr, "Failed to close() %s : %s (%s %d)",
+         (void)fprintf(stderr, "Failed to close() %s : %s (%s %d)\",
                     msg_fifo, strerror(errno), __FILE__, __LINE__);
       }
 #endif
       if (close(fd) == -1)
       {
-         (void) fprintf(stderr, "Failed to close() %s : %s (%s %d)", msg_fifo, strerror(errno), __FILE__, __LINE__);
+         (void) fprintf(stderr, "Failed to close() %s : %s (%s %d)\n", msg_fifo, strerror(errno), __FILE__, __LINE__);
       }
    }
 
