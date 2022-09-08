@@ -256,7 +256,7 @@ resend_files(int no_selected, char **select_list)
              (current_job_id == rl[k].job_id))
          {
             (void)strcpy(p_archive_name, rl[k].archive_name);
-            if (eaccess(archive_dir, R_OK) == 0)
+            if (eaccess(archive_dir, R_OK) != 0)
             {
                rl[k].status = NOT_IN_ARCHIVE;
                not_in_archive++;
