@@ -133,6 +133,7 @@ resend_files(int no_selected, char **select_list)
 #endif
    int                i,
                       k,
+                      ape,
                       total_no_of_items,
                       length = 0,
                       to_do = 0,    /* Number still to be done. */
@@ -212,7 +213,7 @@ resend_files(int no_selected, char **select_list)
       }
       foo++;
       jobid_buffer = strndup(foo, 8);
-      for (int ape = 0; ape < 3; ape++)
+      for (ape = 0; ape < 3; ape++)
       {
          while (*(p_file_name++) != '_')
             ;
