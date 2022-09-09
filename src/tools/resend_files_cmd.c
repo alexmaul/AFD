@@ -603,7 +603,7 @@ send_new_message(char         *p_msg_name,
 #ifdef WITHOUT_FIFO_RW_SUPPORT
       if (close(readfd) == -1)
       {
-         (void)fprintf(stderr, "Failed to close() %s : %s (%s %d)\",
+         (void)fprintf(stderr, "Failed to close() %s : %s (%s %d)\n",
                     msg_fifo, strerror(errno), __FILE__, __LINE__);
       }
 #endif
