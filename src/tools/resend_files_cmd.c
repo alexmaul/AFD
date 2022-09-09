@@ -116,13 +116,13 @@ struct resend_list
 };
 
 /* Local function prototypes. */
-static int              send_new_message(char*, time_t, unsigned int,
+static int              send_new_message(char *, time_t, unsigned int,
                                          unsigned int, unsigned int, char,
                                          int, off_t),
-                        get_file(char*, char*, off_t*);
-static void             resend_files(int, char**),
-                        get_afd_config_value(void),
-                        usage(char*);
+                        get_file(char *, char *, off_t *);
+static void             get_afd_config_value(void),
+                        resend_files(int, char **),
+                        usage(char *);
 
 /*############################# resend_files() ##########################*/
 void
@@ -305,6 +305,7 @@ resend_files(int no_selected, char **select_list)
                      {
                         (void) fprintf(stderr, "Failed to create message : (%s %d)\n",
                         __FILE__, __LINE__);
+                        free((void *)rl);
                         close_counter_file(counter_fd, &unique_number);
                         return;
                      }
@@ -317,9 +318,12 @@ resend_files(int no_selected, char **select_list)
                   creation_time = time(NULL);
                   *p_msg_name = '\0';
                   split_job_counter = 0;
-                  if (create_name(dest_dir, strlen(dest_dir), DEFAULT_PRIORITY, creation_time, current_job_id,
-                           &split_job_counter, unique_number, p_msg_name,
-                           MAX_PATH_LENGTH - (p_msg_name - dest_dir), counter_fd) < 0)
+                  if (create_name(dest_dir, strlen(dest_dir), DEFAULT_PRIORITY,
+                                  creation_time, current_job_id,
+                                  &split_job_counter, unique_number,
+                                  p_msg_name,
+                                  MAX_PATH_LENGTH - (p_msg_name - dest_dir),
+                                  counter_fd) < 0)
                   {
                      (void) fprintf(stderr, "Failed to create a unique directory : (%s %d)\n",
                      __FILE__, __LINE__);
@@ -359,8 +363,8 @@ resend_files(int no_selected, char **select_list)
          int m;
 
          if (send_new_message(p_msg_name, creation_time,
-         					  (unsigned int)*unique_number,
-         					  split_job_counter, last_job_id, DEFAULT_PRIORITY,
+                              (unsigned int)*unique_number,
+                              split_job_counter, last_job_id, DEFAULT_PRIORITY,
                               select_done, total_file_size) < 0)
          {
             (void) fprintf(stderr, "Failed to create message : (%s %d)\n",
@@ -487,7 +491,7 @@ send_new_message(char         *p_msg_name,
    if (*ptr != '/')
    {
       (void) fprintf(stderr, "Unable to find directory number in `%s' (%s %d)\n", p_msg_name, __FILE__, __LINE__);
-      return (INCORRECT);
+      return(INCORRECT);
    }
    dir_no = (unsigned short)strtoul(ptr + 1, NULL, 16);
 
@@ -812,20 +816,23 @@ get_file(char *dest_dir, char *p_dest_dir_end, off_t *file_size)
    return(SUCCESS);
 }
 
+
 /*++++++++++++++++++++++++ get_afd_config_value() +++++++++++++++++++++++*/
 static void
 get_afd_config_value(void)
 {
-   char                 *buffer,
-                        config_file[MAX_PATH_LENGTH];
+   char *buffer,
+        config_file[MAX_PATH_LENGTH];
 
-   (void) sprintf(config_file, "%s%s%s", p_work_dir, ETC_DIR, AFD_CONFIG_FILE);
-   if ((eaccess(config_file, F_OK) == 0)
-            && (read_file_no_cr(config_file, &buffer, YES, __FILE__, __LINE__) != INCORRECT))
+   (void)sprintf(config_file, "%s%s%s",
+                 p_work_dir, ETC_DIR, AFD_CONFIG_FILE);
+   if ((eaccess(config_file, F_OK) == 0) &&
+       (read_file_no_cr(config_file, &buffer, YES, __FILE__, __LINE__) != INCORRECT))
    {
       char value[MAX_INT_LENGTH];
 
-      if (get_definition(buffer, MAX_COPIED_FILES_DEF, value, MAX_INT_LENGTH) != NULL)
+      if (get_definition(buffer, MAX_COPIED_FILES_DEF,
+                         value, MAX_INT_LENGTH) != NULL)
       {
          max_copied_files = atoi(value);
          if ((max_copied_files < 1) || (max_copied_files > 10240))
