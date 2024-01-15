@@ -1,6 +1,6 @@
 /*
  *  init_sf_burst2.c - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 2001 - 2021 Holger Kiehl <Holger.Kiehl@dwd.de>
+ *  Copyright (c) 2001 - 2023 Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -106,8 +106,6 @@ init_sf_burst2(struct job   *p_new_db,
          if (CHECK_STRCMP(db.active_user, p_new_db->user) != 0)
          {
             *values_changed |= USER_CHANGED;
-            free(db.user_home_dir);
-            db.user_home_dir = NULL;
          }
          if (CHECK_STRCMP(db.active_target_dir, p_new_db->target_dir) != 0)
          {
@@ -177,6 +175,26 @@ init_sf_burst2(struct job   *p_new_db,
       }
       db.group_list = p_new_db->group_list;
       db.no_listed = p_new_db->no_listed;
+      if (db.no_of_rhardlinks > 0)
+      {
+         FREE_RT_ARRAY(db.hardlinks);
+         db.hardlinks = NULL;
+      }
+      db.no_of_rhardlinks = p_new_db->no_of_rhardlinks;
+      if (db.no_of_rhardlinks > 0)
+      {
+         db.hardlinks = p_new_db->hardlinks;
+      }
+      if (db.no_of_rsymlinks > 0)
+      {
+         FREE_RT_ARRAY(db.symlinks);
+         db.symlinks = NULL;
+      }
+      db.no_of_rsymlinks = p_new_db->no_of_rsymlinks;
+      if (db.no_of_rsymlinks > 0)
+      {
+         db.symlinks = p_new_db->symlinks;
+      }
       if (db.no_of_restart_files > 0)
       {
          FREE_RT_ARRAY(db.restart_file);
@@ -250,7 +268,7 @@ init_sf_burst2(struct job   *p_new_db,
          free(db.group_mail_domain);
       }
       db.group_mail_domain = p_new_db->group_mail_domain;
-#ifdef _WITH_DE_MAIL_SUPPORT
+# ifdef _WITH_DE_MAIL_SUPPORT
       db.de_mail_options = p_new_db->de_mail_options;
       if (db.de_mail_sender != NULL)
       {
@@ -262,7 +280,7 @@ init_sf_burst2(struct job   *p_new_db,
          free(db.de_mail_privat_id);
       }
       db.de_mail_privat_id = p_new_db->de_mail_privat_id;
-#endif
+# endif
       if (db.charset != NULL)
       {
          free(db.charset);
@@ -299,6 +317,7 @@ init_sf_burst2(struct job   *p_new_db,
       db.dup_check_timeout = p_new_db->dup_check_timeout;
       db.crc_id            = p_new_db->crc_id;
 # endif
+      db.index_file        = p_new_db->index_file; /* For sf_xxx always NULL */
 
       free(p_new_db);
       p_new_db = NULL;

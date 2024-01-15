@@ -1,6 +1,6 @@
 /*
  *  amg.c - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 1995 - 2020 Deutscher Wetterdienst (DWD),
+ *  Copyright (c) 1995 - 2023 Deutscher Wetterdienst (DWD),
  *                            Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
@@ -74,6 +74,7 @@ DESCR__S_M1
  **   27.10.2012 H.Kiehl On Linux check if hardlink protection is enabled
  **                      and if this is the case, warn user and tell him
  **                      what he can do.
+ **   18.02.2023 H.Kiehl Attach to FSA and/or FRA after eval_dir_config().
  **
  */
 DESCR__E_M1
@@ -194,7 +195,8 @@ static void                amg_exit(void),
 #endif
                                                 time_t *, time_t *, int *,
                                                 int *, int *, int *, int *,
-                                                long *, unsigned int *, int *),
+                                                long *, unsigned int *, int *,
+                                                int *),
                            notify_dir_check(void),
                            sig_segv(int),
                            sig_bus(int),
@@ -227,6 +229,7 @@ main(int argc, char *argv[])
                     fd,
                     rescan_time = DEFAULT_RESCAN_TIME,
                     max_no_proc = MAX_NO_OF_DIR_CHECKS,
+                    max_shutdown_time = MAX_SHUTDOWN_TIME,
                     using_groups = NO;
    time_t           hc_old_time;
    size_t           fifo_size;
@@ -235,7 +238,11 @@ main(int argc, char *argv[])
                     *ptr;
    fd_set           rset;
    struct timeval   timeout;
+#ifdef HAVE_STATX
+   struct statx     stat_buf;
+#else
    struct stat      stat_buf;
+#endif
 #ifdef SA_FULLDUMP
    struct sigaction sact;
 #endif
@@ -363,10 +370,19 @@ main(int argc, char *argv[])
       }
       else
       {
+#ifdef HAVE_STATX
+         if (statx(afd_active_fd, "", AT_STATX_SYNC_AS_STAT | AT_EMPTY_PATH,
+                   STATX_SIZE, &stat_buf) < 0)
+#else
          if (fstat(afd_active_fd, &stat_buf) < 0)
+#endif
          {
             system_log(WARN_SIGN, __FILE__, __LINE__,
+#ifdef HAVE_STATX
+                       _("Failed to statx() `%s' : %s"),
+#else
                        _("Failed to fstat() `%s' : %s"),
+#endif
                        afd_active_file, strerror(errno));
             (void)close(afd_active_fd);
             pid_list = NULL;
@@ -374,11 +390,21 @@ main(int argc, char *argv[])
          else
          {
 #ifdef HAVE_MMAP
-            if ((pid_list = mmap(NULL, stat_buf.st_size,
+            if ((pid_list = mmap(NULL,
+# ifdef HAVE_STATX
+                                 stat_buf.stx_size,
+# else
+                                 stat_buf.st_size,
+# endif
                                  (PROT_READ | PROT_WRITE), MAP_SHARED,
                                  afd_active_fd, 0)) == (caddr_t) -1)
 #else
-            if ((pid_list = mmap_emu(NULL, stat_buf.st_size,
+            if ((pid_list = mmap_emu(NULL,
+# ifdef HAVE_STATX
+                                     stat_buf.stx_size,
+# else
+                                     stat_buf.st_size,
+# endif
                                      (PROT_READ | PROT_WRITE), MAP_SHARED,
                                      afd_active_file, 0)) == (caddr_t) -1)
 #endif
@@ -387,7 +413,11 @@ main(int argc, char *argv[])
                           _("mmap() error : %s"), strerror(errno));
                pid_list = NULL;
             }
+#ifdef HAVE_STATX
+            afd_active_size = stat_buf.stx_size;
+#else
             afd_active_size = stat_buf.st_size;
+#endif
 
             if (close(afd_active_fd) == -1)
             {
@@ -415,7 +445,12 @@ main(int argc, char *argv[])
        * Create and initialize AMG counter file. Do it here to
        * avoid having two dir_checks trying to do the same.
        */
+#ifdef HAVE_STATX
+      if ((statx(0, counter_file, AT_STATX_SYNC_AS_STAT, 0, &stat_buf) == -1) &&
+          (errno == ENOENT))
+#else
       if ((stat(counter_file, &stat_buf) == -1) && (errno == ENOENT))
+#endif
       {
          /*
           * Lets assume when there is no counter file that this is the
@@ -452,7 +487,13 @@ main(int argc, char *argv[])
 
       /* If process AFD and AMG_DIALOG have not yet been created */
       /* we create the fifos needed to communicate with them.    */
-      if ((stat(amg_cmd_fifo, &stat_buf) < 0) || (!S_ISFIFO(stat_buf.st_mode)))
+#ifdef HAVE_STATX
+      if ((statx(0, amg_cmd_fifo, AT_STATX_SYNC_AS_STAT,
+                 STATX_MODE, &stat_buf) == -1) ||
+          (!S_ISFIFO(stat_buf.stx_mode)))
+#else
+      if ((stat(amg_cmd_fifo, &stat_buf) == -1) || (!S_ISFIFO(stat_buf.st_mode)))
+#endif
       {
          if (make_fifo(amg_cmd_fifo) < 0)
          {
@@ -461,7 +502,14 @@ main(int argc, char *argv[])
             exit(INCORRECT);
          }
       }
-      if ((stat(db_update_fifo, &stat_buf) < 0) || (!S_ISFIFO(stat_buf.st_mode)))
+#ifdef HAVE_STATX
+      if ((statx(0, db_update_fifo, AT_STATX_SYNC_AS_STAT,
+                 STATX_MODE, &stat_buf) == -1) ||
+          (!S_ISFIFO(stat_buf.stx_mode)))
+#else
+      if ((stat(db_update_fifo, &stat_buf) == -1) ||
+          (!S_ISFIFO(stat_buf.st_mode)))
+#endif
       {
          if (make_fifo(db_update_fifo) < 0)
          {
@@ -510,36 +558,8 @@ main(int argc, char *argv[])
                            &default_retry_interval, &default_transfer_blocksize,
                            &default_successful_retries,
                            &default_transfer_timeout,
-                           &default_error_offline_flag, &create_source_dir);
-
-      /* Lets check and see if create_source_dir was set via afdcfg. */
-      if (fsa_attach_passive(YES, AMG) == SUCCESS)
-      {
-         if (*(unsigned char *)((char *)fsa - AFD_FEATURE_FLAG_OFFSET_END) & DISABLE_CREATE_SOURCE_DIR)
-         {
-            if ((create_source_dir != DEFAULT_CREATE_SOURCE_DIR_DEF) &&
-                (DEFAULT_CREATE_SOURCE_DIR_DEF == NO))
-            {
-               system_log(WARN_SIGN, __FILE__, __LINE__,
-                          "Overriding AFD_CONFIG value %s, setting it to NO due to afdcfg setting.",
-                          CREATE_SOURCE_DIR_DEF);
-            }
-            create_source_dir = NO;
-            create_source_dir_disabled = YES;
-         }
-         else
-         {
-            if ((create_source_dir != DEFAULT_CREATE_SOURCE_DIR_DEF) &&
-                (DEFAULT_CREATE_SOURCE_DIR_DEF == YES))
-            {
-               system_log(WARN_SIGN, __FILE__, __LINE__,
-                          "Overriding AFD_CONFIG value %s, setting it to YES due to afdcfg setting.",
-                          CREATE_SOURCE_DIR_DEF);
-            }
-            create_source_dir = YES;
-         }
-         (void)fsa_detach(NO);
-      }
+                           &default_error_offline_flag, &create_source_dir,
+                           &max_shutdown_time);
 
       /* Determine the size of the fifo buffer and allocate buffer. */
       if ((i = (int)fpathconf(db_update_fd, _PC_PIPE_BUF)) < 0)
@@ -617,6 +637,7 @@ main(int argc, char *argv[])
                hl[i].dup_check_timeout   = fsa[i].dup_check_timeout;
 #endif
                hl[i].protocol_options    = fsa[i].protocol_options;
+               hl[i].protocol_options2   = fsa[i].protocol_options2;
                hl[i].host_status = 0;
                if (fsa[i].host_status & HOST_ERROR_OFFLINE_STATIC)
                {
@@ -671,10 +692,15 @@ main(int argc, char *argv[])
          if (dcfl[i].is_filter == NO)
          {
             /* Get the size of the database file. */
+#ifdef HAVE_STATX
+            if (statx(0, dcfl[i].dc_filter, AT_STATX_SYNC_AS_STAT,
+                      STATX_SIZE | STATX_MTIME, &stat_buf) == -1)
+#else
             if (stat(dcfl[i].dc_filter, &stat_buf) == -1)
+#endif
             {
                system_log(WARN_SIGN, __FILE__, __LINE__,
-                          _("Could not get size of database file `%s' : %s"),
+                          _("Could not get size + time of database file `%s' : %s"),
                           dcfl[i].dc_filter, strerror(errno));
             }
             else
@@ -707,10 +733,15 @@ main(int argc, char *argv[])
                }
                (void)memcpy(dc_dcl[no_of_dir_configs].dir_config_file,
                             dcfl[i].dc_filter, dcfl[i].length);
+#ifdef HAVE_STATX
+               db_size += stat_buf.stx_size;
+               dc_dcl[no_of_dir_configs].dc_old_time = stat_buf.stx_mtime.tv_sec;
+#else
+               db_size += stat_buf.st_size;
                dc_dcl[no_of_dir_configs].dc_old_time = stat_buf.st_mtime;
+#endif
                dc_dcl[no_of_dir_configs].is_filter = NO;
                no_of_dir_configs++;
-               db_size += stat_buf.st_size;
             }
          }
          else
@@ -750,6 +781,35 @@ main(int argc, char *argv[])
       if (using_groups == YES)
       {
          init_group_list_mtime();
+      }
+
+      /* Lets check and see if create_source_dir was set via afdcfg. */
+      if (fsa_attach_passive(YES, AMG) == SUCCESS)
+      {
+         if (*(unsigned char *)((char *)fsa - AFD_FEATURE_FLAG_OFFSET_END) & DISABLE_CREATE_SOURCE_DIR)
+         {
+            if ((create_source_dir != DEFAULT_CREATE_SOURCE_DIR_DEF) &&
+                (DEFAULT_CREATE_SOURCE_DIR_DEF == NO))
+            {
+               system_log(WARN_SIGN, __FILE__, __LINE__,
+                          "Overriding AFD_CONFIG value %s, setting it to NO due to afdcfg setting.",
+                          CREATE_SOURCE_DIR_DEF);
+            }
+            create_source_dir = NO;
+            create_source_dir_disabled = YES;
+         }
+         else
+         {
+            if ((create_source_dir != DEFAULT_CREATE_SOURCE_DIR_DEF) &&
+                (DEFAULT_CREATE_SOURCE_DIR_DEF == YES))
+            {
+               system_log(WARN_SIGN, __FILE__, __LINE__,
+                          "Overriding AFD_CONFIG value %s, setting it to YES due to afdcfg setting.",
+                          CREATE_SOURCE_DIR_DEF);
+            }
+            create_source_dir = YES;
+         }
+         (void)fsa_detach(NO);
       }
 
       /*
@@ -834,6 +894,9 @@ main(int argc, char *argv[])
 
    /* Note time when AMG is started. */
    system_log(INFO_SIGN, NULL, 0, _("Starting %s (%s)"), AMG, PACKAGE_VERSION);
+   system_log(DEBUG_SIGN, NULL, 0,
+              _("AMG Configuration: Maximum shutdown time     %d (0.1 sec)"),
+              max_shutdown_time);
    system_log(DEBUG_SIGN, NULL, 0,
               _("AMG Configuration: Directory scan interval   %d (sec)"),
               rescan_time);
@@ -964,15 +1027,15 @@ main(int argc, char *argv[])
             {
                int j;
 
-               if (com(STOP) == INCORRECT)
+               if (com(SHUTDOWN, __FILE__, __LINE__) == INCORRECT)
                {
                   system_log(INFO_SIGN, NULL, 0,
                              _("Giving it another try ..."));
-                  (void)com(STOP);
+                  (void)com(SHUTDOWN, __FILE__, __LINE__);
                }
 
                /* Wait for the child to terminate. */
-               for (j = 0; j < MAX_SHUTDOWN_TIME;  j++)
+               for (j = 0; j < max_shutdown_time;  j++)
                {
                   if (waitpid(dc_pid, NULL, WNOHANG) == dc_pid)
                   {
@@ -1077,6 +1140,7 @@ main(int argc, char *argv[])
                              hl[i].dup_check_timeout   = fsa[i].dup_check_timeout;
 #endif
                              hl[i].protocol_options    = fsa[i].protocol_options;
+                             hl[i].protocol_options2   = fsa[i].protocol_options2;
                              hl[i].host_status = 0;
                              if (fsa[i].host_status & HOST_ERROR_OFFLINE_STATIC)
                              {
@@ -1225,7 +1289,6 @@ main(int argc, char *argv[])
                                 }
 
                                 hc_warn_counter = 0;
-                                hc_result = NO_CHANGE_IN_HOST_CONFIG;
                                 hc_result = reread_host_config(&hc_old_time,
                                                                NULL, NULL, NULL,
                                                                NULL,
@@ -1245,7 +1308,8 @@ main(int argc, char *argv[])
                                      else
                                      {
                                         event_log(0L, EC_GLOB, ET_MAN, EA_REREAD_HOST_CONFIG,
-                                                  "with %d warnings", hc_warn_counter);
+                                                  "with %d warnings",
+                                                  hc_warn_counter);
                                      }
 
                                 /*
@@ -1354,7 +1418,11 @@ main(int argc, char *argv[])
                                 char         db_update_reply_fifo[MAX_PATH_LENGTH],
                                              flag = fifo_buffer[count - 1],
                                              uc_reply_name[MAX_PATH_LENGTH];
+#ifdef HAVE_STATX
+                                struct statx stat_buf;
+#else
                                 struct stat  stat_buf;
+#endif
                                 FILE         *uc_reply_fp = NULL;
 
                                 (void)memcpy(&ret_pid, &fifo_buffer[count],
@@ -1453,17 +1521,33 @@ main(int argc, char *argv[])
                                    }
                                    else
                                    {
-                                      if (stat(dc_dcl[i].dir_config_file, &stat_buf) < 0)
+#ifdef HAVE_STATX
+                                      if (statx(0, dc_dcl[i].dir_config_file,
+                                                AT_STATX_SYNC_AS_STAT,
+                                                STATX_SIZE | STATX_MTIME,
+                                                &stat_buf) == -1)
+#else
+                                      if (stat(dc_dcl[i].dir_config_file,
+                                               &stat_buf) == -1)
+#endif
                                       {
                                          system_log(WARN_SIGN, __FILE__, __LINE__,
+#ifdef HAVE_STATX
+                                                    _("Failed to statx() `%s' : %s"),
+#else
                                                     _("Failed to stat() `%s' : %s"),
+#endif
                                                     dc_dcl[i].dir_config_file,
                                                     strerror(errno));
                                          stat_error_set = YES;
                                       }
                                       else
                                       {
+#ifdef HAVE_STATX
+                                         if (dc_dcl[i].dc_old_time != stat_buf.stx_mtime.tv_sec)
+#else
                                          if (dc_dcl[i].dc_old_time != stat_buf.st_mtime)
+#endif
                                          {
                                             if ((flag > REREAD_DIR_CONFIG_VERBOSE1) &&
                                                 (uc_reply_fp != NULL))
@@ -1478,12 +1562,25 @@ main(int argc, char *argv[])
                                                              dc_dcl[i].dc_id,
                                                              dc_dcl[i].dir_config_file,
                                                              (pri_time_t)dc_dcl[i].dc_old_time,
-                                                             (pri_time_t)stat_buf.st_mtime);
+#ifdef HAVE_STATX
+                                                             (pri_time_t)stat_buf.stx_mtime.tv_sec
+#else
+                                                             (pri_time_t)stat_buf.st_mtime
+#endif
+                                                            );
                                             }
+#ifdef HAVE_STATX
+                                            dc_dcl[i].dc_old_time = stat_buf.stx_mtime.tv_sec;
+#else
                                             dc_dcl[i].dc_old_time = stat_buf.st_mtime;
+#endif
                                             dc_changed = YES;
                                          }
+#ifdef HAVE_STATX
+                                         db_size += stat_buf.stx_size;
+#else
                                          db_size += stat_buf.st_size;
+#endif
                                       }
                                    }
                                 }
@@ -1500,7 +1597,7 @@ main(int argc, char *argv[])
                                 {
                                    if (dc_changed == YES)
                                    {
-                                      int              old_no_of_hosts,
+                                      int              old_no_of_hosts = 0,
                                                        old_using_groups = using_groups,
                                                        rewrite_host_config = NO;
                                       size_t           old_size = 0;
@@ -1662,7 +1759,12 @@ main(int argc, char *argv[])
                * Check if the HOST_CONFIG file still exists. If not recreate
                * it from the internal current host_list structure.
                */
-              if (stat(host_config_file, &stat_buf) < 0)
+#ifdef HAVE_STATX
+              if (statx(0, host_config_file, AT_STATX_SYNC_AS_STAT,
+                        0, &stat_buf) == -1)
+#else
+              if (stat(host_config_file, &stat_buf) == -1)
+#endif
               {
                  if (errno == ENOENT)
                  {
@@ -1748,7 +1850,8 @@ get_afd_config_value(int          *rescan_time,
                      int          *default_successful_retries,
                      long         *default_transfer_timeout,
                      unsigned int *default_error_offline_flag,
-                     int          *create_source_dir)
+                     int          *create_source_dir,
+                     int          *max_shutdown_time)
 {
    char *buffer,
         config_file[MAX_PATH_LENGTH];
@@ -1827,7 +1930,7 @@ get_afd_config_value(int          *rescan_time,
                          value, MAX_INT_LENGTH) != NULL)
       {
          *default_inotify_flag = (unsigned int)atoi(value);
-         if (*default_inotify_flag > (INOTIFY_RENAME_FLAG | INOTIFY_CLOSE_FLAG | INOTIFY_CREATE_FLAG | INOTIFY_DELETE_FLAG))
+         if (*default_inotify_flag > (INOTIFY_RENAME_FLAG | INOTIFY_CLOSE_FLAG | INOTIFY_CREATE_FLAG | INOTIFY_DELETE_FLAG | INOTIFY_ATTRIB_FLAG))
          {
             system_log(WARN_SIGN, __FILE__, __LINE__,
                        _("Incorrect value (%u) set in AFD_CONFIG for %s. Setting to default %u."),
@@ -2386,6 +2489,23 @@ get_afd_config_value(int          *rescan_time,
          dcfl[0].length = length;
          (void)strcpy(dcfl[0].dc_filter, config_file);
          dcfl[0].is_filter = NO;
+      }
+      if (get_definition(buffer, MAX_SHUTDOWN_TIME_DEF,
+                         value, MAX_INT_LENGTH) != NULL)
+      {
+         *max_shutdown_time = atoi(value);
+         if (*max_shutdown_time < 2)
+         {
+            system_log(WARN_SIGN, __FILE__, __LINE__,
+                       "%s is to low (%d < 2), setting default %d.",
+                       MAX_SHUTDOWN_TIME_DEF, *max_shutdown_time,
+                       MAX_SHUTDOWN_TIME);
+            *max_shutdown_time = MAX_SHUTDOWN_TIME;
+         }
+      }
+      else
+      {
+         *max_shutdown_time = MAX_SHUTDOWN_TIME;
       }
       free(buffer);
    }

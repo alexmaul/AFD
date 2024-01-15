@@ -26,6 +26,12 @@ DESCR__S_M3
  **
  ** SYNOPSIS
  **   int basic_authentication(struct http_message_reply *p_hmr)
+ **   int digest_authentication(struct http_message_reply *p_hmr)
+ **   int aws_cmd(char                      *cmd,
+ **               char                      *file_name,
+ **               char                      *target_dir,
+ **               char                      *parameter,
+ **               struct http_message_reply *p_hmr)
  **
  ** DESCRIPTION
  **   authcmd provides a set of functions to generate the authorization
@@ -45,116 +51,818 @@ DESCR__S_M3
 DESCR__E_M3
 
 #include <stdio.h>             /* snprintf()                             */
-#include <stdlib.h>            /* malloc(), free()                       */
+#include <stdlib.h>            /* malloc(), free(), initstate_r(),       */
+                               /* random_r()                             */
 #include <string.h>            /* memcpy(), strlen()                     */
 #include <time.h>              /* strftime(), time()                     */
+#include <unistd.h>            /* getpid()                               */
 #ifdef WITH_SSL
+# include <openssl/opensslv.h> /* OPENSSL_VERSION_NUMBER                 */
 # include <openssl/hmac.h>     /* HMAC()                                 */
-# include <openssl/evp.h>      /* EVP_sha256()                           */
-# include <openssl/sha.h>      /* SHA256_Init(), SHA256_Update(),        */
-                               /* SHA256_Final()                         */
+# include <openssl/evp.h>      /* EVP_MD_CTX_new(), EVP_DigestInit_ex(), */
+                               /* EVP_sha256(), EVP_DigestUpdate(),      */
+                               /* EVP_DigestFinal(), EVP_MD_CTX_free()   */
 #endif
 #include <errno.h>
 #include "fddefs.h"
 #include "commondefs.h"
 #include "httpdefs.h"
 
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+# define EVP_MD_CTX_new EVP_MD_CTX_create
+# define EVP_MD_CTX_free EVP_MD_CTX_destroy
+#endif
+
+/* Hash types function str2hash knows. */
+#define AFD_MD5        1
+#define AFD_SHA256     2
+#define AFD_SHA512_256 3
+
 /* External global variables. */
 extern char msg_str[];
 
 #ifdef WITH_SSL
 /* Local function prototypes. */
-static int  sha256_file(char *, char *);
-static void hash_2_hex(const unsigned char *, const int, char *),
-            sha256_string(char *, char *);
+static int     aws4_cmd_authentication(char *, char *, char *, char *,
+                                       struct http_message_reply *),
+               aws_cmd_no_sign_request(struct http_message_reply *),
+               sha256_file(char *, char *),
+               str2hash(int, char *, int, char *);
+static void    hash_2_hex(const unsigned char *, const int, char *);
 #endif
+static int32_t get_random(void);
 
 
 /*######################## basic_authentication() #######################*/
 int
 basic_authentication(struct http_message_reply *p_hmr)
 {
-   size_t length;
-   char   *dst_ptr,
-          *src_ptr,
-          base_64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
-          userpasswd[MAX_USER_NAME_LENGTH + MAX_USER_NAME_LENGTH];
+   if ((p_hmr->user[0] != '\0') || (p_hmr->passwd[0] != '\0'))
+   {
+      size_t length;
+      char   *dst_ptr,
+             *src_ptr,
+             base_64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
+             userpasswd[MAX_USER_NAME_LENGTH + MAX_USER_NAME_LENGTH];
 
-   /*
-    * Let us first construct the authorization string from user name
-    * and passwd:  <user>:<passwd>
-    * And then encode this to using base-64 encoding.
-    */
-   length = snprintf(userpasswd, MAX_USER_NAME_LENGTH + MAX_USER_NAME_LENGTH,
-                     "%s:%s", p_hmr->user, p_hmr->passwd);
-   if (length > (MAX_USER_NAME_LENGTH + MAX_USER_NAME_LENGTH))
-   {
-      trans_log(ERROR_SIGN, __FILE__, __LINE__, "basic_authentication", NULL,
+      /*
+       * Let us first construct the authorization string from user name
+       * and passwd:  <user>:<passwd>
+       * And then encode this to using base-64 encoding.
+       */
+      length = snprintf(userpasswd, MAX_USER_NAME_LENGTH + MAX_USER_NAME_LENGTH,
+                        "%s:%s", p_hmr->user, p_hmr->passwd);
+      if (length > (MAX_USER_NAME_LENGTH + MAX_USER_NAME_LENGTH))
+      {
+         trans_log(ERROR_SIGN, __FILE__, __LINE__, "basic_authentication", NULL,
 #if SIZEOF_SIZE_T == 4
-                _("Buffer length to store user+passwd not long enough, needs %d bytes"),
+                   _("Buffer length to store user+passwd not long enough, needs %d bytes"),
 #else
-                _("Buffer length to store user+passwd not long enough, needs %lld bytes"),
+                   _("Buffer length to store user+passwd not long enough, needs %lld bytes"),
 #endif
-               (pri_size_t)length);
-      return(INCORRECT);
+                  (pri_size_t)length);
+         return(INCORRECT);
+      }
+      free(p_hmr->authorization);
+      if ((p_hmr->authorization = malloc(21 + length + (length / 3) + 4 + 2 + 1)) == NULL)
+      {
+         trans_log(ERROR_SIGN, __FILE__, __LINE__, "basic_authentication", NULL,
+                   _("malloc() error : %s"), strerror(errno));
+         return(INCORRECT);
+      }
+      dst_ptr = p_hmr->authorization;
+      *dst_ptr = 'A'; *(dst_ptr + 1) = 'u'; *(dst_ptr + 2) = 't';
+      *(dst_ptr + 3) = 'h'; *(dst_ptr + 4) = 'o'; *(dst_ptr + 5) = 'r';
+      *(dst_ptr + 6) = 'i'; *(dst_ptr + 7) = 'z'; *(dst_ptr + 8) = 'a';
+      *(dst_ptr + 9) = 't'; *(dst_ptr + 10) = 'i'; *(dst_ptr + 11) = 'o';
+      *(dst_ptr + 12) = 'n'; *(dst_ptr + 13) = ':'; *(dst_ptr + 14) = ' ';
+      *(dst_ptr + 15) = 'B'; *(dst_ptr + 16) = 'a'; *(dst_ptr + 17) = 's';
+      *(dst_ptr + 18) = 'i'; *(dst_ptr + 19) = 'c'; *(dst_ptr + 20) = ' ';
+      dst_ptr += 21;
+      src_ptr = userpasswd;
+      while (length > 2)
+      {
+         *dst_ptr = base_64[(int)(*src_ptr) >> 2];
+         *(dst_ptr + 1) = base_64[((((int)(*src_ptr) & 0x3)) << 4) | (((int)(*(src_ptr + 1)) & 0xF0) >> 4)];
+         *(dst_ptr + 2) = base_64[((((int)(*(src_ptr + 1))) & 0xF) << 2) | ((((int)(*(src_ptr + 2))) & 0xC0) >> 6)];
+         *(dst_ptr + 3) = base_64[((int)(*(src_ptr + 2))) & 0x3F];
+         src_ptr += 3;
+         length -= 3;
+         dst_ptr += 4;
+      }
+      if (length == 2)
+      {
+         *dst_ptr = base_64[(int)(*src_ptr) >> 2];
+         *(dst_ptr + 1) = base_64[((((int)(*src_ptr) & 0x3)) << 4) | (((int)(*(src_ptr + 1)) & 0xF0) >> 4)];
+         *(dst_ptr + 2) = base_64[(((int)(*(src_ptr + 1))) & 0xF) << 2];
+         *(dst_ptr + 3) = '=';
+         dst_ptr += 4;
+      }
+      else if (length == 1)
+           {
+              *dst_ptr = base_64[(int)(*src_ptr) >> 2];
+              *(dst_ptr + 1) = base_64[(((int)(*src_ptr) & 0x3)) << 4];
+              *(dst_ptr + 2) = '=';
+              *(dst_ptr + 3) = '=';
+              dst_ptr += 4;
+           }
+      *dst_ptr = '\r';
+      *(dst_ptr + 1) = '\n';
+      *(dst_ptr + 2) = '\0';
    }
-   free(p_hmr->authorization);
-   if ((p_hmr->authorization = malloc(21 + length + (length / 3) + 4 + 2 + 1)) == NULL)
-   {
-      trans_log(ERROR_SIGN, __FILE__, __LINE__, "basic_authentication", NULL,
-                _("malloc() error : %s"), strerror(errno));
-      return(INCORRECT);
-   }
-   dst_ptr = p_hmr->authorization;
-   *dst_ptr = 'A'; *(dst_ptr + 1) = 'u'; *(dst_ptr + 2) = 't';
-   *(dst_ptr + 3) = 'h'; *(dst_ptr + 4) = 'o'; *(dst_ptr + 5) = 'r';
-   *(dst_ptr + 6) = 'i'; *(dst_ptr + 7) = 'z'; *(dst_ptr + 8) = 'a';
-   *(dst_ptr + 9) = 't'; *(dst_ptr + 10) = 'i'; *(dst_ptr + 11) = 'o';
-   *(dst_ptr + 12) = 'n'; *(dst_ptr + 13) = ':'; *(dst_ptr + 14) = ' ';
-   *(dst_ptr + 15) = 'B'; *(dst_ptr + 16) = 'a'; *(dst_ptr + 17) = 's';
-   *(dst_ptr + 18) = 'i'; *(dst_ptr + 19) = 'c'; *(dst_ptr + 20) = ' ';
-   dst_ptr += 21;
-   src_ptr = userpasswd;
-   while (length > 2)
-   {
-      *dst_ptr = base_64[(int)(*src_ptr) >> 2];
-      *(dst_ptr + 1) = base_64[((((int)(*src_ptr) & 0x3)) << 4) | (((int)(*(src_ptr + 1)) & 0xF0) >> 4)];
-      *(dst_ptr + 2) = base_64[((((int)(*(src_ptr + 1))) & 0xF) << 2) | ((((int)(*(src_ptr + 2))) & 0xC0) >> 6)];
-      *(dst_ptr + 3) = base_64[((int)(*(src_ptr + 2))) & 0x3F];
-      src_ptr += 3;
-      length -= 3;
-      dst_ptr += 4;
-   }
-   if (length == 2)
-   {
-      *dst_ptr = base_64[(int)(*src_ptr) >> 2];
-      *(dst_ptr + 1) = base_64[((((int)(*src_ptr) & 0x3)) << 4) | (((int)(*(src_ptr + 1)) & 0xF0) >> 4)];
-      *(dst_ptr + 2) = base_64[(((int)(*(src_ptr + 1))) & 0xF) << 2];
-      *(dst_ptr + 3) = '=';
-      dst_ptr += 4;
-   }
-   else if (length == 1)
-        {
-           *dst_ptr = base_64[(int)(*src_ptr) >> 2];
-           *(dst_ptr + 1) = base_64[(((int)(*src_ptr) & 0x3)) << 4];
-           *(dst_ptr + 2) = '=';
-           *(dst_ptr + 3) = '=';
-           dst_ptr += 4;
-        }
-   *dst_ptr = '\r';
-   *(dst_ptr + 1) = '\n';
-   *(dst_ptr + 2) = '\0';
 
    return(SUCCESS);
 }
 
 
-#ifdef WITH_SSL
-/*                                    cmd     target_dir                       filename                        parameter                                                             host:                              x-amz-content-sha256:                                  host;x-amz-content-sha256;x-amz-date */
-#define CANONICAL_REQUEST_CMD_LENGTH (8 + 1 + (3 * MAX_RECIPIENT_LENGTH) + 1 + (3 * MAX_FILENAME_LENGTH) + 1 + MAX_AWS4_PARAMETER_LENGTH + MAX_INT_LENGTH + MAX_FILENAME_LENGTH + 1 + 5 + MAX_REAL_HOSTNAME_LENGTH + 1 + 21 + SHA256_DIGEST_LENGTH + SHA256_DIGEST_LENGTH + 1 + 11 + 16 + 2 + 52 + SHA256_DIGEST_LENGTH + SHA256_DIGEST_LENGTH + 1 + 1)
-#define STRING_2_SIGN_CMD_LENGTH     (16 + 1 + 16 + 1 + 8 + 1 + MAX_REAL_HOSTNAME_LENGTH + 1 + 15 + 1 + SHA256_DIGEST_LENGTH + SHA256_DIGEST_LENGTH + 1)
-/*##################### aws4_cmd_authentication() #######################*/
+/*####################### digest_authentication() #######################*/
 int
+digest_authentication(char                      *method,
+                      char                      *path,
+                      char                      *filename,
+                      struct http_message_reply *p_hmr)
+{
+   int        ret;
+   size_t     length,
+              realm_length,
+              username_length;
+   char       *str2hash_a1;
+
+   if (p_hmr->realm == NULL)
+   {
+      trans_log(ERROR_SIGN, __FILE__, __LINE__, "digest_authentication", NULL,
+                _("Unable to locate realm from server. Unable to generate a digest."));
+      return(INCORRECT);
+   }
+   if (p_hmr->nonce == NULL)
+   {
+      trans_log(ERROR_SIGN, __FILE__, __LINE__, "digest_authentication", NULL,
+                _("Unable to locate nonce from server. Unable to generate a digest."));
+      return(INCORRECT);
+   }
+   if (p_hmr->authorization != NULL)
+   {
+      free(p_hmr->authorization);
+      p_hmr->authorization = NULL;
+   }
+
+   username_length = strlen(p_hmr->user);
+   realm_length = strlen(p_hmr->realm);
+   length = username_length + 1 + realm_length + 1 +
+            strlen(p_hmr->passwd) + 1;
+
+   if ((str2hash_a1 = malloc(length)) == NULL)
+   {
+      trans_log(ERROR_SIGN, __FILE__, __LINE__, "digest_authentication", NULL,
+                _("malloc() error : %s"), strerror(errno));
+      ret = INCORRECT;
+   }
+   else
+   {
+      int  algorithm_length,
+           hash_type;
+      char hex_a1[EVP_MAX_MD_SIZE + EVP_MAX_MD_SIZE + 1];
+
+      (void)snprintf(str2hash_a1, length,
+                     "%s:%s:%s", p_hmr->user, p_hmr->realm, p_hmr->passwd);
+
+      if ((p_hmr->www_authenticate == WWW_AUTHENTICATE_DIGEST_MD5) ||
+          (p_hmr->www_authenticate == WWW_AUTHENTICATE_DIGEST_MD5_S))
+      {
+         hash_type = AFD_MD5;
+         algorithm_length = 3;
+      }
+      else if ((p_hmr->www_authenticate == WWW_AUTHENTICATE_DIGEST_SHA256) ||
+               (p_hmr->www_authenticate == WWW_AUTHENTICATE_DIGEST_SHA256_S))
+           {
+              hash_type = AFD_SHA256;
+              algorithm_length = 7;
+           }
+      else if ((p_hmr->www_authenticate == WWW_AUTHENTICATE_DIGEST_SHA512_256) ||
+               (p_hmr->www_authenticate == WWW_AUTHENTICATE_DIGEST_SHA512_256_S))
+           {
+              hash_type = AFD_SHA512_256;
+              algorithm_length = 11;
+           }
+           else
+           {
+              trans_log(ERROR_SIGN, __FILE__, __LINE__, "digest_authentication", NULL,
+                       _("Unknown www_authenticat type %d"),
+                       p_hmr->www_authenticate);
+              free(str2hash_a1);
+
+              return(INCORRECT);
+           }
+
+      if ((ret = str2hash(hash_type, str2hash_a1, length - 1, hex_a1)) > INCORRECT)
+      {
+         int  nonce_length;
+         char cnonce[9];
+
+         nonce_length = strlen(p_hmr->nonce);
+         if ((p_hmr->www_authenticate == WWW_AUTHENTICATE_DIGEST_MD5_S) ||
+             (p_hmr->www_authenticate == WWW_AUTHENTICATE_DIGEST_SHA256_S) ||
+             (p_hmr->www_authenticate == WWW_AUTHENTICATE_DIGEST_SHA512_256_S))
+         {
+            length = ret + 1 + nonce_length + 1 + 8 + 1;
+            free(str2hash_a1);
+            if ((str2hash_a1 = malloc(length)) == NULL)
+            {
+               trans_log(ERROR_SIGN, __FILE__, __LINE__, "digest_authentication", NULL,
+                         _("malloc() error : %s"), strerror(errno));
+               ret = INCORRECT;
+            }
+            else
+            {
+               (void)snprintf(cnonce, 9, "%08x", (unsigned int)get_random());
+               (void)snprintf(str2hash_a1, length,
+                              "%s:%s:%s", hex_a1, p_hmr->nonce, cnonce);
+               ret = str2hash(hash_type, str2hash_a1, length - 1, hex_a1);
+               if (ret > INCORRECT)
+               {
+                  ret = SUCCESS;
+               }
+            }
+         }
+         else
+         {
+            cnonce[0] = '\0';
+            ret = SUCCESS;
+         }
+         if (ret == SUCCESS)
+         {
+            int  filename_length,
+                 path_length;
+            char *uri_str;
+
+            filename_length = strlen(filename);
+            path_length = strlen(path);
+            length = 1 + path_length + 1 + filename_length + 1;
+
+            if ((uri_str = malloc(length)) == NULL)
+            {
+               trans_log(ERROR_SIGN, __FILE__, __LINE__, "digest_authentication", NULL,
+                         _("malloc() error : %s"), strerror(errno));
+               ret = INCORRECT;
+            }
+            else
+            {
+               int  uri_length;
+               char *str2hash_a2;
+
+               if (path_length == 0)
+               {
+                  uri_str[0] = '/';
+                  uri_length = 1;
+               }
+               else
+               {
+                  if (path[0] != '/')
+                  {
+                     uri_str[0] = '/';
+                     uri_length = 1;
+                  }
+                  else
+                  {
+                     uri_length = 0;
+                  }
+                  (void)memcpy(&uri_str[uri_length], path, path_length);
+                  uri_length += path_length;
+                  if ((uri_length > 0) && (uri_str[uri_length] == '/'))
+                  {
+                     uri_str[uri_length] = '\0';
+                     uri_length--;
+                  }
+               }
+               if (filename_length > 0)
+               {
+                  if (uri_str[uri_length - 1] != '/')
+                  {
+                     uri_str[uri_length] = '/';
+                     uri_length++;
+                  }
+                  (void)memcpy(&uri_str[uri_length], filename, filename_length);
+                  uri_length += filename_length;
+               }
+               uri_str[uri_length] = '\0';
+
+               length = strlen(method) + 1 + uri_length + 1;
+               if ((str2hash_a2 = malloc(length)) == NULL)
+               {
+                  trans_log(ERROR_SIGN, __FILE__, __LINE__, "digest_authentication", NULL,
+                            _("malloc() error : %s"), strerror(errno));
+                  ret = INCORRECT;
+               }
+               else
+               {
+                  char hex_a2[EVP_MAX_MD_SIZE + EVP_MAX_MD_SIZE + 1];
+
+                  ret = snprintf(str2hash_a2, length,
+                                       "%s:%s", method, uri_str);
+                  if ((ret = str2hash(hash_type, str2hash_a2,
+                                      ret, hex_a2)) > INCORRECT)
+                  {
+                     char *str2hash_digest;
+
+                     length = strlen(hex_a1) + 1 + 
+                              nonce_length + 1 +
+                              8 + 1 +  /* nonce count */
+                              8 + 1 +  /* cnonce */
+                              4 + 1 +  /* qop */
+                              ret + 1; /* strlen(hex_a2) */
+                     if ((str2hash_digest = malloc(length)) == NULL)
+                     {
+                        trans_log(ERROR_SIGN, __FILE__, __LINE__, "digest_authentication", NULL,
+                                  _("malloc() error : %s"), strerror(errno));
+                        ret = INCORRECT;
+                     }
+                     else
+                     {
+                        char hex_digest[EVP_MAX_MD_SIZE + EVP_MAX_MD_SIZE + 1];
+
+                        if ((p_hmr->digest_options & QOP_AUTH) ||
+                            (p_hmr->digest_options & QOP_AUTH_INT))
+                        {
+                           if (cnonce[0] == '\0')
+                           {
+                              (void)snprintf(cnonce, 9, "%08x",
+                                             (unsigned int)get_random());
+                           }
+                           ret = snprintf(str2hash_digest, length,
+                                          "%s:%s:00000001:%s:auth:%s",
+                                          hex_a1, p_hmr->nonce, cnonce,
+                                          hex_a2);
+                        }
+                        else
+                        {
+                           ret = snprintf(str2hash_digest, length,
+                                          "%s:%s:%s",
+                                          hex_a1, p_hmr->nonce, hex_a2);
+                        }
+                        if ((ret = str2hash(hash_type, str2hash_digest,
+                                            ret, hex_digest)) > INCORRECT)
+                        {
+                           int  digest_length = ret,
+                                hex_username_length = 0;
+                           char hex_username[EVP_MAX_MD_SIZE + EVP_MAX_MD_SIZE + 1];
+
+                           if (p_hmr->digest_options & HASH_USERNAME)
+                           {
+                              char *str2hash_username;
+
+                              length = username_length + 1 + realm_length + 1;
+                              if ((str2hash_username = malloc(length)) == NULL)
+                              {
+                                 trans_log(ERROR_SIGN, __FILE__, __LINE__, "digest_authentication", NULL,
+                                           _("malloc() error : %s"), strerror(errno));
+                                 ret = INCORRECT;
+                              }
+                              else
+                              {
+                                 ret = snprintf(str2hash_username, length,
+                                                "%s:%s",
+                                                p_hmr->user, p_hmr->realm);
+                                 if ((ret = str2hash(hash_type,
+                                                     str2hash_username,
+                                                     ret,
+                                                     hex_username)) > INCORRECT)
+                                 {
+                                    hex_username_length = ret;
+                                    ret = SUCCESS;
+                                 }
+                                 free(str2hash_username);
+                              }
+                           }
+
+                           if ((p_hmr->digest_options & QOP_AUTH) ||
+                               (p_hmr->digest_options & QOP_AUTH_INT))
+                           {
+                              if (hex_username_length == 0)
+                              {
+                                 /*
+                                  * RFC 2617 + 7616
+                                  * Authorization: Digest username="A",
+                                  *                realm="B",
+                                  *                nonce="C",
+                                  *                uri="D",
+                                  *                algorithm=auth,
+                                  *                nc=00000001,
+                                  *                cnonce="E",
+                                  *                qop=auth,
+                                  *                response="F",
+                                  *                opaque="G"
+                                  */
+                                 length = 22 + 9 + 1 + username_length + 1 + 2 +
+                                          6 + 1 + realm_length + 1 + 2 +
+                                          6 + 1 + nonce_length + 1 + 2 +
+                                          4 + 1 + uri_length + 1 + 2 +
+                                          10 + algorithm_length + 2 + /* algorithm= */
+                                          11 + 2 +            /* nc=00000001 */
+                                          7 + 1 + 8 + 1 + 2 + /* cnonce="E" */
+                                          8 + 2 +             /* qop=auth */
+                                          9 + 1 + digest_length + 1 + /* response="F" */
+                                          2 + 1; /* carriage ret + new line */
+                                 if (p_hmr->opaque == NULL)
+                                 {
+                                    if ((p_hmr->authorization = malloc(length)) == NULL)
+                                    {
+                                       trans_log(ERROR_SIGN, __FILE__, __LINE__, "digest_authentication", NULL,
+                                                 _("malloc() error : %s"), strerror(errno));
+                                       ret = INCORRECT;
+                                    }
+                                    else
+                                    {
+                                       if ((p_hmr->www_authenticate == WWW_AUTHENTICATE_DIGEST_MD5) ||
+                                           (p_hmr->www_authenticate == WWW_AUTHENTICATE_DIGEST_MD5_S))
+                                       {
+                                          (void)snprintf(p_hmr->authorization,
+                                                         length,
+                                                         "Authorization: Digest username=\"%s\", realm=\"%s\", nonce=\"%s\", uri=\"%s\", algorithm=MD5, nc=00000001, cnonce=\"%s\", qop=auth, response=\"%s\"\r\n",
+                                                         p_hmr->user,
+                                                         p_hmr->realm,
+                                                         p_hmr->nonce,
+                                                         uri_str,
+                                                         cnonce,
+                                                         hex_digest);
+                                          ret = SUCCESS;
+                                       }
+                                       else if ((p_hmr->www_authenticate == WWW_AUTHENTICATE_DIGEST_SHA256) ||
+                                                (p_hmr->www_authenticate == WWW_AUTHENTICATE_DIGEST_SHA256_S))
+                                            {
+                                               (void)snprintf(p_hmr->authorization,
+                                                              length,
+                                                              "Authorization: Digest username=\"%s\", realm=\"%s\", nonce=\"%s\", uri=\"%s\", algorithm=SHA-256, nc=00000001, cnonce=\"%s\", qop=auth, response=\"%s\"\r\n",
+                                                              p_hmr->user,
+                                                              p_hmr->realm,
+                                                              p_hmr->nonce,
+                                                              uri_str,
+                                                              cnonce,
+                                                              hex_digest);
+                                               ret = SUCCESS;
+                                            }
+                                       else if ((p_hmr->www_authenticate == WWW_AUTHENTICATE_DIGEST_SHA512_256) ||
+                                                (p_hmr->www_authenticate == WWW_AUTHENTICATE_DIGEST_SHA512_256_S))
+                                            {
+                                               (void)snprintf(p_hmr->authorization,
+                                                              length,
+                                                              "Authorization: Digest username=\"%s\", realm=\"%s\", nonce=\"%s\", uri=\"%s\", algorithm=SHA-512-256, nc=00000001, cnonce=\"%s\", qop=auth, response=\"%s\"\r\n",
+                                                              p_hmr->user,
+                                                              p_hmr->realm,
+                                                              p_hmr->nonce,
+                                                              uri_str,
+                                                              cnonce,
+                                                              hex_digest);
+                                               ret = SUCCESS;
+                                            }
+                                            else
+                                            {
+                                               trans_log(ERROR_SIGN, __FILE__, __LINE__, "digest_authentication", NULL,
+                                                        _("Unknown www_authenticat type %d"),
+                                                        p_hmr->www_authenticate);
+                                               ret = INCORRECT;
+                                            }
+                                    }
+                                 }
+                                 else
+                                 {
+                                    length += 2 + 7 + 1 + strlen(p_hmr->opaque) + 1;
+                                    if ((p_hmr->authorization = malloc(length)) == NULL)
+                                    {
+                                       trans_log(ERROR_SIGN, __FILE__, __LINE__, "digest_authentication", NULL,
+                                                 _("malloc() error : %s"), strerror(errno));
+                                       ret = INCORRECT;
+                                    }
+                                    else
+                                    {
+                                       if ((p_hmr->www_authenticate == WWW_AUTHENTICATE_DIGEST_MD5) ||
+                                           (p_hmr->www_authenticate == WWW_AUTHENTICATE_DIGEST_MD5_S))
+                                       {
+                                          (void)snprintf(p_hmr->authorization,
+                                                         length,
+                                                         "Authorization: Digest username=\"%s\", realm=\"%s\", nonce=\"%s\", uri=\"%s\", algorithm=MD5, nc=00000001, cnonce=\"%s\", qop=auth, response=\"%s\", opaque=\"%s\"\r\n",
+                                                         p_hmr->user,
+                                                         p_hmr->realm,
+                                                         p_hmr->nonce,
+                                                         uri_str,
+                                                         cnonce,
+                                                         hex_digest,
+                                                         p_hmr->opaque);
+                                          ret = SUCCESS;
+                                       }
+                                       else if ((p_hmr->www_authenticate == WWW_AUTHENTICATE_DIGEST_SHA256) ||
+                                                (p_hmr->www_authenticate == WWW_AUTHENTICATE_DIGEST_SHA256_S))
+                                            {
+                                               (void)snprintf(p_hmr->authorization,
+                                                              length,
+                                                              "Authorization: Digest username=\"%s\", realm=\"%s\", nonce=\"%s\", uri=\"%s\", algorithm=SHA-256, nc=00000001, cnonce=\"%s\", qop=auth, response=\"%s\", opaque=\"%s\"\r\n",
+                                                              p_hmr->user,
+                                                              p_hmr->realm,
+                                                              p_hmr->nonce,
+                                                              uri_str,
+                                                              cnonce,
+                                                              hex_digest,
+                                                              p_hmr->opaque);
+                                               ret = SUCCESS;
+                                            }
+                                       else if ((p_hmr->www_authenticate == WWW_AUTHENTICATE_DIGEST_SHA512_256) ||
+                                                (p_hmr->www_authenticate == WWW_AUTHENTICATE_DIGEST_SHA512_256_S))
+                                            {
+                                               (void)snprintf(p_hmr->authorization,
+                                                              length,
+                                                              "Authorization: Digest username=\"%s\", realm=\"%s\", nonce=\"%s\", uri=\"%s\", algorithm=SHA-512-256, nc=00000001, cnonce=\"%s\", qop=auth, response=\"%s\", opaque=\"%s\"\r\n",
+                                                              p_hmr->user,
+                                                              p_hmr->realm,
+                                                              p_hmr->nonce,
+                                                              uri_str,
+                                                              cnonce,
+                                                              hex_digest,
+                                                              p_hmr->opaque);
+                                               ret = SUCCESS;
+                                            }
+                                            else
+                                            {
+                                               trans_log(ERROR_SIGN, __FILE__, __LINE__, "digest_authentication", NULL,
+                                                        _("Unknown www_authenticat type %d"),
+                                                        p_hmr->www_authenticate);
+                                               ret = INCORRECT;
+                                            }
+                                    }
+                                 }
+
+                              }
+                              else
+                              {
+                                 /*
+                                  * RFC 7616
+                                  * Authorization: Digest username="A",
+                                  *                realm="B",
+                                  *                nonce="C",
+                                  *                uri="D",
+                                  *                algorithm=auth,
+                                  *                nc=00000001,
+                                  *                cnonce="E",
+                                  *                qop=auth,
+                                  *                userhash=true,
+                                  *                response="F",
+                                  *                opaque="G"
+                                  */
+                                 length = 22 + 9 + 1 + hex_username_length + 1 + 2 +
+                                          6 + 1 + realm_length + 1 + 2 +
+                                          6 + 1 + nonce_length + 1 + 2 +
+                                          4 + 1 + uri_length + 1 + 2 +
+                                          10 + algorithm_length + 2 + /* algorithm= */
+                                          11 + 2 + /* nc=00000001 */
+                                          7 + 1 + 8 + 1 + 2 + /* cnonce="E" */
+                                          8 + 2 +  /* qop=auth */
+                                          13 + 2 + /* userhash=true */
+                                          9 + 1 + digest_length + 1 + /* response="F" */
+                                          2 + 1; /* carriage ret + new line */
+                                 if (p_hmr->opaque == NULL)
+                                 {
+                                    if ((p_hmr->authorization = malloc(length)) == NULL)
+                                    {
+                                       trans_log(ERROR_SIGN, __FILE__, __LINE__, "digest_authentication", NULL,
+                                                 _("malloc() error : %s"), strerror(errno));
+                                       ret = INCORRECT;
+                                    }
+                                    else
+                                    {
+                                       if ((p_hmr->www_authenticate == WWW_AUTHENTICATE_DIGEST_MD5) ||
+                                           (p_hmr->www_authenticate == WWW_AUTHENTICATE_DIGEST_MD5_S))
+                                       {
+                                          (void)snprintf(p_hmr->authorization,
+                                                         length,
+                                                         "Authorization: Digest username=\"%s\", realm=\"%s\", nonce=\"%s\", uri=\"%s\", algorithm=MD5, nc=00000001, cnonce=\"%s\", qop=auth, userhash=true, response=\"%s\"\r\n",
+                                                         hex_username,
+                                                         p_hmr->realm,
+                                                         p_hmr->nonce,
+                                                         uri_str,
+                                                         cnonce,
+                                                         hex_digest);
+                                          ret = SUCCESS;
+                                       }
+                                       else if ((p_hmr->www_authenticate == WWW_AUTHENTICATE_DIGEST_SHA256) ||
+                                                (p_hmr->www_authenticate == WWW_AUTHENTICATE_DIGEST_SHA256_S))
+                                            {
+                                               (void)snprintf(p_hmr->authorization,
+                                                              length,
+                                                              "Authorization: Digest username=\"%s\", realm=\"%s\", nonce=\"%s\", uri=\"%s\", algorithm=SHA-256, nc=00000001, cnonce=\"%s\", qop=auth, userhash=true, response=\"%s\"\r\n",
+                                                              hex_username,
+                                                              p_hmr->realm,
+                                                              p_hmr->nonce,
+                                                              uri_str,
+                                                              cnonce,
+                                                              hex_digest);
+                                               ret = SUCCESS;
+                                            }
+                                       else if ((p_hmr->www_authenticate == WWW_AUTHENTICATE_DIGEST_SHA512_256) ||
+                                                (p_hmr->www_authenticate == WWW_AUTHENTICATE_DIGEST_SHA512_256_S))
+                                            {
+                                               (void)snprintf(p_hmr->authorization,
+                                                              length,
+                                                              "Authorization: Digest username=\"%s\", realm=\"%s\", nonce=\"%s\", uri=\"%s\", algorithm=SHA-512-256, nc=00000001, cnonce=\"%s\", qop=auth, userhash=true, response=\"%s\"\r\n",
+                                                              hex_username,
+                                                              p_hmr->realm,
+                                                              p_hmr->nonce,
+                                                              uri_str,
+                                                              cnonce,
+                                                              hex_digest);
+                                               ret = SUCCESS;
+                                            }
+                                            else
+                                            {
+                                               trans_log(ERROR_SIGN, __FILE__, __LINE__, "digest_authentication", NULL,
+                                                        _("Unknown www_authenticat type %d"),
+                                                        p_hmr->www_authenticate);
+                                               ret = INCORRECT;
+                                            }
+                                    }
+                                 }
+                                 else
+                                 {
+                                    length += 2 + 7 + 1 + strlen(p_hmr->opaque) + 1;
+                                    if ((p_hmr->authorization = malloc(length)) == NULL)
+                                    {
+                                       trans_log(ERROR_SIGN, __FILE__, __LINE__, "digest_authentication", NULL,
+                                                 _("malloc() error : %s"), strerror(errno));
+                                       ret = INCORRECT;
+                                    }
+                                    else
+                                    {
+                                       if ((p_hmr->www_authenticate == WWW_AUTHENTICATE_DIGEST_MD5) ||
+                                           (p_hmr->www_authenticate == WWW_AUTHENTICATE_DIGEST_MD5_S))
+                                       {
+                                          (void)snprintf(p_hmr->authorization,
+                                                         length,
+                                                         "Authorization: Digest username=\"%s\", realm=\"%s\", nonce=\"%s\", uri=\"%s\", algorithm=MD5, nc=00000001, cnonce=\"%s\", qop=auth, userhash=true, response=\"%s\", opaque=\"%s\"\r\n",
+                                                         hex_username,
+                                                         p_hmr->realm,
+                                                         p_hmr->nonce,
+                                                         uri_str,
+                                                         cnonce,
+                                                         hex_digest,
+                                                         p_hmr->opaque);
+                                          ret = SUCCESS;
+                                       }
+                                       else if ((p_hmr->www_authenticate == WWW_AUTHENTICATE_DIGEST_SHA256) ||
+                                                (p_hmr->www_authenticate == WWW_AUTHENTICATE_DIGEST_SHA256_S))
+                                            {
+                                               (void)snprintf(p_hmr->authorization,
+                                                              length,
+                                                              "Authorization: Digest username=\"%s\", realm=\"%s\", nonce=\"%s\", uri=\"%s\", algorithm=SHA-256, nc=00000001, cnonce=\"%s\", qop=auth, userhash=true, response=\"%s\", opaque=\"%s\"\r\n",
+                                                              hex_username,
+                                                              p_hmr->realm,
+                                                              p_hmr->nonce,
+                                                              uri_str,
+                                                              cnonce,
+                                                              hex_digest,
+                                                              p_hmr->opaque);
+                                               ret = SUCCESS;
+                                            }
+                                       else if ((p_hmr->www_authenticate == WWW_AUTHENTICATE_DIGEST_SHA512_256) ||
+                                                (p_hmr->www_authenticate == WWW_AUTHENTICATE_DIGEST_SHA512_256_S))
+                                            {
+                                               (void)snprintf(p_hmr->authorization,
+                                                              length,
+                                                              "Authorization: Digest username=\"%s\", realm=\"%s\", nonce=\"%s\", uri=\"%s\", algorithm=SHA-512-256, nc=00000001, cnonce=\"%s\", qop=auth, userhash=true, response=\"%s\", opaque=\"%s\"\r\n",
+                                                              hex_username,
+                                                              p_hmr->realm,
+                                                              p_hmr->nonce,
+                                                              uri_str,
+                                                              cnonce,
+                                                              hex_digest,
+                                                              p_hmr->opaque);
+                                               ret = SUCCESS;
+                                            }
+                                            else
+                                            {
+                                               trans_log(ERROR_SIGN, __FILE__, __LINE__, "digest_authentication", NULL,
+                                                        _("Unknown www_authenticat type %d"),
+                                                        p_hmr->www_authenticate);
+                                               ret = INCORRECT;
+                                            }
+                                    }
+                                 }
+                              }
+                           }
+                           else
+                           {
+                              /*
+                               * RFC 2069
+                               * Authorization: Digest username="A",
+                               *                realm="B",
+                               *                nonce="C",
+                               *                uri="D",
+                               *                response="E",
+                               *                opaque="F"
+                               */
+                              length = 22 + 9 + 1 + username_length + 1 + 2 +
+                                       6 + 1 + realm_length + 1 + 2 +
+                                       6 + 1 + nonce_length + 1 + 2 +
+                                       4 + 1 + uri_length + 1 + 2 +
+                                       9 + 1 + digest_length + 1 + /* response="E" */
+                                       2 + 1; /* carriage ret + new line */
+                              if (p_hmr->opaque == NULL)
+                              {
+                                 if ((p_hmr->authorization = malloc(length)) == NULL)
+                                 {
+                                    trans_log(ERROR_SIGN, __FILE__, __LINE__, "digest_authentication", NULL,
+                                              _("malloc() error : %s"), strerror(errno));
+                                    ret = INCORRECT;
+                                 }
+                                 else
+                                 {
+                                    (void)snprintf(p_hmr->authorization,
+                                                   length,
+                                                   "Authorization: Digest username=\"%s\", realm=\"%s\", nonce=\"%s\", uri=\"%s\", response=\"%s\"\r\n",
+                                                   p_hmr->user,
+                                                   p_hmr->realm,
+                                                   p_hmr->nonce,
+                                                   uri_str,
+                                                   hex_digest);
+                                    ret = SUCCESS;
+                                 }
+                              }
+                              else
+                              {
+                                 length += 2 + 7 + 1 + strlen(p_hmr->opaque) + 1;
+                                 if ((p_hmr->authorization = malloc(length)) == NULL)
+                                 {
+                                    trans_log(ERROR_SIGN, __FILE__, __LINE__, "digest_authentication", NULL,
+                                              _("malloc() error : %s"), strerror(errno));
+                                    ret = INCORRECT;
+                                 }
+                                 else
+                                 {
+                                    (void)snprintf(p_hmr->authorization,
+                                                   length,
+                                                   "Authorization: Digest username=\"%s\", realm=\"%s\", nonce=\"%s\", uri=\"%s\", response=\"%s\", opaque=\"%s\"\r\n",
+                                                   p_hmr->user,
+                                                   p_hmr->realm,
+                                                   p_hmr->nonce,
+                                                   uri_str,
+                                                   hex_digest,
+                                                   p_hmr->opaque);
+                                    ret = SUCCESS;
+                                 }
+                              }
+                           }
+                        }
+                        free(str2hash_digest);
+                     }
+                  }
+                  free(str2hash_a2);
+               }
+               free(uri_str);
+            }
+         }
+      }
+   
+      free(str2hash_a1);
+   }
+
+   return(ret);
+}
+
+
+#ifdef WITH_SSL
+/*############################# aws_cmd() ###############################*/
+int
+aws_cmd(char                      *cmd,
+        char                      *file_name,
+        char                      *target_dir,
+        char                      *parameter,
+        struct http_message_reply *p_hmr)
+{
+   int ret;
+
+   if (p_hmr->auth_type == AUTH_AWS4_HMAC_SHA256)
+   {
+      ret = aws4_cmd_authentication(cmd, file_name, target_dir,
+                                    parameter, p_hmr);
+   }
+   else if (p_hmr->auth_type == AUTH_AWS_NO_SIGN_REQUEST)
+        {
+           ret = aws_cmd_no_sign_request(p_hmr);
+        }
+        else
+        {
+           trans_log(ERROR_SIGN, __FILE__, __LINE__, "aws_cmd", NULL,
+                     "Unknown auth_type (%d)",
+                     (int)p_hmr->auth_type);
+           ret = INCORRECT;
+        }
+
+   return(ret);
+}
+
+
+/*                                    cmd     /   target_dir_encoded               file_name_encoded               parameter                       host:  p_hmr->hostname                x-amz-content-sha256:  SHA256_EMPTY_PAYLOAD                              x-amz-date:  date_long   host;x-amz-content-sha256;x-amz-date                 SHA256_EMPTY_PAYLOAD */
+#define CANONICAL_REQUEST_CMD_LENGTH (8 + 1 + 1 + (3 * MAX_RECIPIENT_LENGTH) + 1 + (3 * MAX_FILENAME_LENGTH) + 1 + MAX_AWS4_PARAMETER_LENGTH + 1 + 5 +    MAX_REAL_HOSTNAME_LENGTH + 1 + 21                   + SHA256_EMPTY_PAYLOAD_LENGTH + 1                 + 11         + 16 + 2 +    36 + 1 +                                             SHA256_EMPTY_PAYLOAD_LENGTH + 1)
+/*                                    AWS4-HMAC-SHA256  date_long  date_short /   p_hmr->region              /   p_hmr->service /   aws4_request canonical_request_hash_hex */
+#define STRING_2_SIGN_CMD_LENGTH     (16 + 1 +          16 + 1 +   8 +        1 + MAX_REAL_HOSTNAME_LENGTH + 1 + 2 +            1 + 12 + 1 +     SHA256_DIGEST_LENGTH + SHA256_DIGEST_LENGTH + 1)
+/*++++++++++++++++++++++ aws4_cmd_authentication() ++++++++++++++++++++++*/
+static int
 aws4_cmd_authentication(char                      *cmd,
                         char                      *file_name,
                         char                      *target_dir,
@@ -227,7 +935,8 @@ aws4_cmd_authentication(char                      *cmd,
       trace_log(NULL, 0, CRLF_C_TRACE, canonical_request, strlen(canonical_request), NULL);
       trace_log(NULL, 0, C_TRACE, "-------------------------------------------", 43, NULL);
 #endif
-      sha256_string(canonical_request, canonical_request_hash_hex);
+      (void)str2hash(AFD_SHA256, canonical_request, ret,
+                     canonical_request_hash_hex);
       string_2_sign_length = snprintf(string_2_sign, STRING_2_SIGN_CMD_LENGTH,
                                       "AWS4-HMAC-SHA256\n%s\n%s/%s/%s/aws4_request\n%s",
                                       date_long, date_short, p_hmr->region,
@@ -411,6 +1120,66 @@ aws4_cmd_authentication(char                      *cmd,
 }
 
 
+/*++++++++++++++++++++++ aws_cmd_no_sign_request() ++++++++++++++++++++++*/
+static int
+aws_cmd_no_sign_request(struct http_message_reply *p_hmr)
+{
+   int    ret;
+   char   date_long[17];
+   time_t now;
+
+   if (p_hmr->authorization != NULL)
+   {
+      free(p_hmr->authorization);
+      p_hmr->authorization = NULL;
+   }
+
+   now = time(NULL);
+   if (strftime(date_long, 17, "%Y%m%dT%H%M%SZ", gmtime(&now)) == 0)
+   {
+      trans_log(ERROR_SIGN, __FILE__, __LINE__, "aws_cmd_no_sign_request", NULL,
+                _("strftime() error : %s"), strerror(errno));
+      ret = INCORRECT;
+   }
+   else
+   {
+      size_t authorization_length;
+
+      authorization_length = 28 + /* x-amz-date: */
+                             2 +  /* CRLF */
+                             1;   /* \0 */
+      if ((p_hmr->authorization = malloc(authorization_length)) != NULL)
+      {
+         ret = snprintf(p_hmr->authorization, authorization_length,
+                        "x-amz-date: %s\r\n", date_long);
+         if (ret < authorization_length)
+         {
+            ret = SUCCESS;
+         }
+         else
+         {
+            trans_log(ERROR_SIGN, __FILE__, __LINE__, "aws_cmd_no_sign_request", NULL,
+                      "snprintf() authorization output truncated (%d >= %d).",
+                      ret, authorization_length);
+            free(p_hmr->authorization);
+            p_hmr->authorization = NULL;
+            ret = INCORRECT;
+         }
+      }
+      else
+      {
+         trans_log(ERROR_SIGN, __FILE__, __LINE__, "aws_cmd_no_sign_request", NULL,
+                   _("malloc() error : %s"), strerror(errno));
+         ret = INCORRECT;
+      }
+   }
+
+   return(ret);
+}
+
+
+/*                                            /   target_dir_encoded               file_name_encoded               content-length:                 host:  p_hmr->hostname                x-amz-content-sha256:  file_content_hash_hex                             x-amz-date:  date_long   content-length;host;x-amz-content-sha256;x-amz-date  file_content_hash_hex */
+#define CANONICAL_REQUEST_PUT_LENGTH (4 + 1 + 1 + (3 * MAX_RECIPIENT_LENGTH) + 1 + (3 * MAX_FILENAME_LENGTH) + 2 + 15 + MAX_OFF_T_LENGTH + 1     + 5    + MAX_REAL_HOSTNAME_LENGTH + 1 + 21                   + SHA256_DIGEST_LENGTH + SHA256_DIGEST_LENGTH + 1 + 11         + 16 + 2 +    51 + 1 +                                             SHA256_DIGEST_LENGTH + SHA256_DIGEST_LENGTH + 1)
 /*##################### aws4_put_authentication() #######################*/
 int
 aws4_put_authentication(char                      *file_name,
@@ -471,20 +1240,12 @@ aws4_put_authentication(char                      *file_name,
    {
       int           key_len,
                     string_2_sign_length;
-      char          canonical_request[4 + 1 +                     /* PUT */
-                                      (3 * MAX_RECIPIENT_LENGTH) + 1 +  /* target_dir */
-                                      (3 * MAX_FILENAME_LENGTH) + 2 +   /* file_name */
-                                      15 + MAX_OFF_T_LENGTH + 1 + /* content-length: */
-                                      5 + MAX_REAL_HOSTNAME_LENGTH + 1 +  /* host: */
-                                      21 + SHA256_DIGEST_LENGTH + SHA256_DIGEST_LENGTH + 1 + /* x-amz-content-sha256: */
-                                      11 + 16 + 2 + 52 +          /* content-length;host;x-amz-content-sha256;x-amz-date */
-                                      SHA256_DIGEST_LENGTH + SHA256_DIGEST_LENGTH + /* SHA256 sum */
-                                      1],                         /* \0 */
+      char          canonical_request[CANONICAL_REQUEST_PUT_LENGTH],
                     canonical_request_hash_hex[SHA256_DIGEST_LENGTH + SHA256_DIGEST_LENGTH + 1],
                     date_short[9],
                     file_name_encoded[(3 * MAX_FILENAME_LENGTH)],
                     key[4 + MAX_USER_NAME_LENGTH + 1],
-                    string_2_sign[16 + 1 + 16 + 1 + 8 + 1 + MAX_REAL_HOSTNAME_LENGTH + 1 + 15 + 1 + SHA256_DIGEST_LENGTH + SHA256_DIGEST_LENGTH + 1],
+                    string_2_sign[STRING_2_SIGN_CMD_LENGTH],
                     target_dir_encoded[(3 * MAX_RECIPIENT_LENGTH)];
       unsigned char result[SHA256_DIGEST_LENGTH];
       const EVP_MD  *sha256evp = EVP_sha256();
@@ -493,8 +1254,7 @@ aws4_put_authentication(char                      *file_name,
       date_short[8] = '\0';
       url_path_encode(target_dir, target_dir_encoded);
       url_path_encode(file_name, file_name_encoded);
-      (void)snprintf(canonical_request,
-                     4 + 1 + (3 * MAX_RECIPIENT_LENGTH) + 1 + (3 * MAX_FILENAME_LENGTH) + 2 + 15 + MAX_OFF_T_LENGTH + 1 + 5 + MAX_REAL_HOSTNAME_LENGTH + 1 + 21 + SHA256_DIGEST_LENGTH + SHA256_DIGEST_LENGTH + 1 + 11 + 16 + 2 + 52 + SHA256_DIGEST_LENGTH + SHA256_DIGEST_LENGTH + 1,
+      ret = snprintf(canonical_request, CANONICAL_REQUEST_PUT_LENGTH,
 # if SIZEOF_OFF_T == 4
                      "PUT\n%s%s%s\n\ncontent-length:%ld\nhost:%s\nx-amz-content-sha256:%s\nx-amz-date:%s\n\ncontent-length;host;x-amz-content-sha256;x-amz-date\n%s",
 # else
@@ -505,18 +1265,43 @@ aws4_put_authentication(char                      *file_name,
                      (pri_off_t)file_size, p_hmr->hostname,
                      file_content_hash_hex, date_long, file_content_hash_hex);
 
+      if (ret >= CANONICAL_REQUEST_PUT_LENGTH)
+      {
+         trans_log(ERROR_SIGN, __FILE__, __LINE__, "aws4_put_authentication", NULL,
+                   "snprintf() canonical_request output truncated (>=%d).",
+                   CANONICAL_REQUEST_PUT_LENGTH);
+         if (free_file_content_hash_hex == YES)
+         {
+            free(file_content_hash_hex);
+            file_content_hash_hex = NULL;
+         }
+         return(INCORRECT);
+      }
+
 #ifdef WITH_TRACE
        trace_log(NULL, 0, C_TRACE, "------------ canonical_request ------------", 43, NULL);
        trace_log(NULL, 0, CRLF_C_TRACE, canonical_request, strlen(canonical_request), NULL);
        trace_log(NULL, 0, C_TRACE, "-------------------------------------------", 43, NULL);
 #endif
-      sha256_string(canonical_request, canonical_request_hash_hex);
-      string_2_sign_length = snprintf(string_2_sign,
-                                      16 + 1 + 16 + 1 + 8 + 1 + MAX_REAL_HOSTNAME_LENGTH + 1 + 15 + 1 + SHA256_DIGEST_LENGTH + SHA256_DIGEST_LENGTH + 1,
+      (void)str2hash(AFD_SHA256, canonical_request, ret,
+                     canonical_request_hash_hex);
+      string_2_sign_length = snprintf(string_2_sign, STRING_2_SIGN_CMD_LENGTH,
                                       "AWS4-HMAC-SHA256\n%s\n%s/%s/%s/aws4_request\n%s",
                                       date_long, date_short, p_hmr->region,
                                       p_hmr->service,
                                       canonical_request_hash_hex);
+      if (string_2_sign_length >= STRING_2_SIGN_CMD_LENGTH)
+      {
+         trans_log(ERROR_SIGN, __FILE__, __LINE__, "aws4_put_authentication", NULL,
+                   "snprintf() string_2_sign output truncated (>=%d).",
+                   STRING_2_SIGN_CMD_LENGTH);
+         if (free_file_content_hash_hex == YES)
+         {
+            free(file_content_hash_hex);
+            file_content_hash_hex = NULL;
+         }
+         return(INCORRECT);
+      }
 #ifdef WITH_TRACE
        trace_log(NULL, 0, C_TRACE, "-------------- string_2_sign --------------", 43, NULL);
        trace_log(NULL, 0, CRLF_C_TRACE, string_2_sign, string_2_sign_length, NULL);
@@ -708,54 +1493,66 @@ sha256_file(char *file, char *sha256_hash_hex)
    }
    else
    {
-      SHA256_CTX sha256;
+      EVP_MD_CTX *sha256 = NULL;
 
-      if ((ret = SHA256_Init(&sha256)) == 1)
+      if ((sha256 = EVP_MD_CTX_new()) != NULL)
       {
-         char *buffer;
-
-         if ((buffer = malloc(32768)) == NULL)
+         if ((ret = EVP_DigestInit_ex(sha256, EVP_sha256(), NULL)) == 1)
          {
-            trans_log(ERROR_SIGN, __FILE__, __LINE__, "sha256_file", NULL,
-                      "Failed to malloc() 32768 bytes : %s", strerror(errno));
-            ret = INCORRECT;
+            char *buffer;
+
+            if ((buffer = malloc(32768)) == NULL)
+            {
+               trans_log(ERROR_SIGN, __FILE__, __LINE__, "sha256_file", NULL,
+                         "Failed to malloc() 32768 bytes : %s",
+                         strerror(errno));
+               ret = INCORRECT;
+            }
+            else
+            {
+               size_t bytes_read;
+
+               while ((bytes_read = fread(buffer, 1, 32768, fp)))
+               {
+                  if ((ret = EVP_DigestUpdate(sha256, buffer, bytes_read)) != 1)
+                  {
+                     trans_log(ERROR_SIGN, __FILE__, __LINE__, "sha256_file", NULL,
+                               "EVP_DigestUpdate() failed (%d)", ret);
+                     ret = INCORRECT;
+                  }
+               }
+               if (ret != INCORRECT)
+               {
+                  unsigned int  ret_size;
+                  unsigned char hash[EVP_MAX_MD_SIZE];
+
+                  if ((ret = EVP_DigestFinal(sha256, hash, &ret_size)) == 1)
+                  {
+                     hash_2_hex(hash, ret_size, sha256_hash_hex);
+                     ret = SUCCESS;
+                  }
+                  else
+                  {
+                     trans_log(ERROR_SIGN, __FILE__, __LINE__, "sha256_file", NULL,
+                               "EVP_DigestFinal() failed (%d)", ret);
+                     ret = INCORRECT;
+                  }
+               }
+               free(buffer);
+            }
          }
          else
          {
-            size_t bytes_read;
-
-            while ((bytes_read = fread(buffer, 1, 32768, fp)))
-            {
-               if ((ret = SHA256_Update(&sha256, buffer, bytes_read)) != 1)
-               {
-                  trans_log(ERROR_SIGN, __FILE__, __LINE__, "sha256_file", NULL,
-                            "SHA256_Update() failed (%d)", ret);
-                  ret = INCORRECT;
-               }
-            }
-            if (ret != INCORRECT)
-            {
-               unsigned char hash[SHA256_DIGEST_LENGTH];
-
-               if ((ret = SHA256_Final(hash, &sha256)) == 1)
-               {
-                  hash_2_hex(hash, SHA256_DIGEST_LENGTH, sha256_hash_hex);
-                  ret = SUCCESS;
-               }
-               else
-               {
-                  trans_log(ERROR_SIGN, __FILE__, __LINE__, "sha256_file", NULL,
-                            "SHA256_Final() failed (%d)", ret);
-                  ret = INCORRECT;
-               }
-            }
-            free(buffer);
+            trans_log(ERROR_SIGN, __FILE__, __LINE__, "sha256_file", NULL,
+                      "EVP_DigestInit_ex() failed (%d)", ret);
+            ret = INCORRECT;
          }
+         EVP_MD_CTX_free(sha256);
       }
       else
       {
          trans_log(ERROR_SIGN, __FILE__, __LINE__, "sha256_file", NULL,
-                   "SHA256_Init() failed (%d)", ret);
+                   "EVP_MD_CTX_new() failed.");
          ret = INCORRECT;
       }
       if (fclose(fp) == EOF)
@@ -769,63 +1566,128 @@ sha256_file(char *file, char *sha256_hash_hex)
 }
 
 
-/*+++++++++++++++++++++++++++ sha256_string() +++++++++++++++++++++++++++*/
-static void
-sha256_string(char *string, char *sha256_hash_hex)
+/*+++++++++++++++++++++++++++++ str2hash() ++++++++++++++++++++++++++++++*/
+static int
+str2hash(int hash_type, char *string, int strlength, char *hash_hex)
 {
-   int        i;
-   SHA256_CTX sha256;
+   int        i,
+              ret;
+   EVP_MD_CTX *mdctx;
 
-   if ((i = SHA256_Init(&sha256)) == 1)
+   if ((mdctx = EVP_MD_CTX_new()) != NULL)
    {
-      if ((i = SHA256_Update(&sha256, string, strlen(string))) == 1)
+      const EVP_MD *evp;
+
+      if (hash_type == AFD_SHA256)
       {
-         unsigned char hash[SHA256_DIGEST_LENGTH];
+         evp = EVP_sha256();
+      }
+      else if (hash_type == AFD_MD5)
+           {
+              evp = EVP_md5();
+           }
+#ifdef HAVE_EVP_SHA512_256
+      else if (hash_type == AFD_SHA512_256)
+           {
+              evp = EVP_sha512_256();
+           }
+#endif
+           else
+           {
+              trans_log(ERROR_SIGN, __FILE__, __LINE__, "str2hash", NULL,
+                        _("Unknown hash type %d"), hash_type);
+              EVP_MD_CTX_free(mdctx);
+              hash_hex[0] = '\0';
 
-         if ((i = SHA256_Final(hash, &sha256)) == 1)
+              return(INCORRECT);
+           }
+      if ((i = EVP_DigestInit_ex(mdctx, evp, NULL)) == 1)
+      {
+         if ((i = EVP_DigestUpdate(mdctx, string, strlength)) == 1)
          {
-            int  wpos = 0;
-            char *hex = "0123456789abcdef";
+            unsigned int  ret_size;
+            unsigned char hash[EVP_MAX_MD_SIZE];
 
-            for (i = 0; i < SHA256_DIGEST_LENGTH; i++)
+            if ((i = EVP_DigestFinal(mdctx, hash, &ret_size)) == 1)
             {
-               if (hash[i] > 15)
+               int  wpos = 0;
+               char *hex = "0123456789abcdef";
+
+               for (i = 0; i < ret_size; i++)
                {
-                  sha256_hash_hex[wpos] = hex[hash[i] >> 4];
-                  sha256_hash_hex[wpos + 1] = hex[hash[i] & 0x0F];
+                  if (hash[i] > 15)
+                  {
+                     hash_hex[wpos] = hex[hash[i] >> 4];
+                     hash_hex[wpos + 1] = hex[hash[i] & 0x0F];
+                  }
+                  else
+                  {
+                     hash_hex[wpos] = '0';
+                     hash_hex[wpos + 1] = hex[hash[i]];
+                  }
+                  wpos += 2;
                }
-               else
-               {
-                  sha256_hash_hex[wpos] = '0';
-                  sha256_hash_hex[wpos + 1] = hex[hash[i]];
-               }
-               wpos += 2;
+               ret = i = wpos;
             }
-            i = 64;
+            else
+            {
+               trans_log(ERROR_SIGN, __FILE__, __LINE__, "str2hash", NULL,
+                         "EVP_DigestFinal() failed (%d)", i);
+               i = 0;
+               ret = INCORRECT;
+            }
          }
          else
          {
-            trans_log(ERROR_SIGN, __FILE__, __LINE__, "sha256_string", NULL,
-                      "SHA256_Final() failed (%d)", i);
+            trans_log(ERROR_SIGN, __FILE__, __LINE__, "str2hash", NULL,
+                      "EVP_DigestUpdate() failed (%d)", i);
             i = 0;
+            ret = INCORRECT;
          }
       }
       else
       {
-         trans_log(ERROR_SIGN, __FILE__, __LINE__, "sha256_string", NULL,
-                   "SHA256_Update() failed (%d)", i);
+         trans_log(ERROR_SIGN, __FILE__, __LINE__, "str2hash", NULL,
+                   "EVP_DigestInit_ex() failed (%d)", i);
          i = 0;
+         ret = INCORRECT;
       }
+      EVP_MD_CTX_free(mdctx);
    }
    else
    {
-      trans_log(ERROR_SIGN, __FILE__, __LINE__, "sha256_string", NULL,
-                "SHA256_Init() failed (%d)", i);
+      trans_log(ERROR_SIGN, __FILE__, __LINE__, "str2hash", NULL,
+                "EVP_MD_CTX_new() failed.");
       i = 0;
+      ret = INCORRECT;
    }
-   sha256_hash_hex[i] = '\0';
+   hash_hex[i] = '\0';
 
-   return;
+   return(ret);
+}
+
+
+/*+++++++++++++++++++++++++++++ get_random() ++++++++++++++++++++++++++++*/
+static int32_t
+get_random(void)
+{
+   static int                initialiazed = 0;
+   static char               statebuf[64];
+   static struct random_data state;
+   int32_t                   ret;
+
+   if (initialiazed == 0)
+   {
+      (void)initstate_r((unsigned int)(time(NULL) ^ getpid()), statebuf,
+                        64, &state);
+      initialiazed = 1;
+   }
+   if (random_r(&state, &ret) != 0)
+   {
+      ret = 4091742;
+   }
+
+   return(ret);
 }
 
 

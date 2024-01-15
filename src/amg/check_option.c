@@ -1,6 +1,6 @@
 /*
  *  check_option.c - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 2007 - 2020 Holger Kiehl <Holger.Kiehl@dwd.de>
+ *  Copyright (c) 2007 - 2023 Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -46,6 +46,8 @@ DESCR__S_M3
  **   11.05.2017 H.Kiehl Added parameter cmd_fp, so we can return warnings/
  **                      errors to command line tools.
  **   07.07.2019 H.Kiehl Added trans_srename.
+ **   31.05.2023 H.Kiehl Added hardlink and symlink.
+ **   27.05.2023 H.Kiehl Added ageing.
  **
  */
 DESCR__E_M3
@@ -307,6 +309,23 @@ check_option(char *option, FILE *cmd_fp)
                                   "Invalid age limit specified.");
                     return(INCORRECT);
               }
+           }
+        }
+   else if ((CHECK_STRNCMP(option, AGEING_ID, AGEING_ID_LENGTH) == 0) &&
+            ((*(option + AGEING_ID_LENGTH) == ' ') ||
+             (*(option + AGEING_ID_LENGTH) == '\t')))
+        {
+           ptr += AGEING_ID_LENGTH + 1;
+           while ((*ptr == ' ') || (*ptr == '\t'))
+           {
+              ptr++;
+           }
+           if ((*ptr < '0') || (*ptr > '9') ||
+               ((*(ptr + 1) != '\0') && (*(ptr + 1) != ' ')))
+           {
+              update_db_log(WARN_SIGN, __FILE__, __LINE__, cmd_fp, NULL,
+                         "Invalid %s value.", AGEING_ID);
+              return(INCORRECT);
            }
         }
    else if ((CHECK_STRNCMP(option, ULOCK_ID, ULOCK_ID_LENGTH) == 0) &&
@@ -679,7 +698,10 @@ check_option(char *option, FILE *cmd_fp)
             ((*(option + TIMEZONE_ID_LENGTH) == ' ') ||
              (*(option + TIMEZONE_ID_LENGTH) == '\t')))
         {
-           int i;
+           int  i;
+# ifdef TZDIR
+           char timezone_name[MAX_TIMEZONE_LENGTH + 1];
+# endif
 
            ptr += TIMEZONE_ID_LENGTH + 1;
            while ((*ptr == ' ') || (*ptr == '\t'))
@@ -691,6 +713,9 @@ check_option(char *option, FILE *cmd_fp)
            while ((*(ptr + i) != '\0') && (isascii((int)(*(ptr + i)))) &&
                   (i < MAX_TIMEZONE_LENGTH))
            {
+# ifdef TZDIR
+              timezone_name[i] = *(ptr + i);
+# endif
               i++;
            }
            if (i == MAX_TIMEZONE_LENGTH)
@@ -705,6 +730,15 @@ check_option(char *option, FILE *cmd_fp)
                             "Invalid (%s) %s specified.", ptr, TIMEZONE_ID);
               return(INCORRECT);
            }
+# ifdef TZDIR
+           timezone_name[i] = '\0';
+           if (timezone_name_check(timezone_name) == INCORRECT)
+           {
+              update_db_log(WARN_SIGN, __FILE__, __LINE__, cmd_fp, NULL,
+                            "Unable to find specified timezone (%s) in %s",
+                            timezone_name, TZDIR);
+           }
+# endif
         }
 #endif
 #ifdef _WITH_TRANS_EXEC
@@ -1200,6 +1234,50 @@ check_option(char *option, FILE *cmd_fp)
                                CHMOD_ID);
                  return(INCORRECT);
               }
+           }
+        }
+   else if ((CHECK_STRNCMP(option, REMOTE_HARDLINK_ID,
+                           REMOTE_HARDLINK_ID_LENGTH) == 0) &&
+            ((*(option + REMOTE_HARDLINK_ID_LENGTH) == ' ') ||
+             (*(option + REMOTE_HARDLINK_ID_LENGTH) == '\t')))
+        {
+           ptr += REMOTE_HARDLINK_ID_LENGTH + 1;
+           while ((*ptr == ' ') || (*ptr == '\t'))
+           {
+              ptr++;
+           }
+           if (*ptr == '\0')
+           {
+              update_db_log(WARN_SIGN, __FILE__, __LINE__, cmd_fp, NULL,
+                            "No new name specified for option %s.",
+                            REMOTE_HARDLINK_ID);
+              return(INCORRECT);
+           }
+           else
+           {
+              /* OK */;
+           }
+        }
+   else if ((CHECK_STRNCMP(option, REMOTE_SYMLINK_ID,
+                           REMOTE_SYMLINK_ID_LENGTH) == 0) &&
+            ((*(option + REMOTE_SYMLINK_ID_LENGTH) == ' ') ||
+             (*(option + REMOTE_SYMLINK_ID_LENGTH) == '\t')))
+        {
+           ptr += REMOTE_SYMLINK_ID_LENGTH + 1;
+           while ((*ptr == ' ') || (*ptr == '\t'))
+           {
+              ptr++;
+           }
+           if (*ptr == '\0')
+           {
+              update_db_log(WARN_SIGN, __FILE__, __LINE__, cmd_fp, NULL,
+                            "No new name specified for option %s.",
+                            REMOTE_SYMLINK_ID);
+              return(INCORRECT);
+           }
+           else
+           {
+              /* OK */;
            }
         }
    else if (CHECK_STRNCMP(option, CREATE_TARGET_DIR_ID, CREATE_TARGET_DIR_ID_LENGTH) == 0)

@@ -1,6 +1,6 @@
 /*
  *  check_burst_gf.c - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 2014 - 2021 Holger Kiehl <Holger.Kiehl@dwd.de>
+ *  Copyright (c) 2014 - 2023 Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -79,7 +79,8 @@ extern struct retrieve_list       *rl;
 static sig_atomic_t               signal_caught;
 
 /* Local function prototypes. */
-static void                       sig_alarm(int);
+static void                       free_db(struct job *),
+                                  sig_alarm(int);
 
 
 /*########################### check_burst_gf() ##########################*/
@@ -129,11 +130,7 @@ check_burst_gf(unsigned int *values_changed)
          return(NO);
       }
 
-#ifdef NEW_FRA
       if (((fra->dir_options & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#else
-      if (((fra->dir_flag & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#endif
           (db.special_flag & DISTRIBUTED_HELPER_JOB))
       {
          if ((db.protocol != LOC_FLAG) && (db.protocol != EXEC_FLAG) &&
@@ -530,10 +527,25 @@ check_burst_gf(unsigned int *values_changed)
                {
                   next_check_time = 0;
                }
+               if ((db.protocol & HTTP_FLAG) &&
+                   (fra->dir_options & URL_WITH_INDEX_FILE_NAME))
+               {
+                  if ((p_new_db->index_file = malloc(MAX_RECIPIENT_LENGTH)) == NULL)
+                  {
+                     system_log(ERROR_SIGN, __FILE__, __LINE__,
+                                "Could not malloc() memory for index file : %s",
+                                strerror(errno));
+                     exit(ALLOC_ERROR);
+                  }
+               }
+               else
+               {
+                  p_new_db->index_file = NULL;
+               }
                if (eval_recipient(fra->url, p_new_db, NULL,
                                   next_check_time) == INCORRECT)
                {
-                  free(p_new_db);
+                  free_db(p_new_db);
 
                   return(NO);
                }
@@ -549,7 +561,7 @@ check_burst_gf(unsigned int *values_changed)
                    ((db.protocol & SFTP_FLAG) &&
                     (CHECK_STRCMP(p_new_db->user, db.user) != 0)))
                {
-                  free(p_new_db);
+                  free_db(p_new_db);
                   ret = NEITHER;
                }
                else
@@ -751,11 +763,7 @@ check_burst_gf(unsigned int *values_changed)
                        {
                           break;
                        }
-#ifdef NEW_FRA
                        if (((fra->dir_options & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#else
-                       if (((fra->dir_flag & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#endif
                            (db.special_flag & DISTRIBUTED_HELPER_JOB))
                        {
                           if (fsa->job_status[(int)db.job_no].unique_name[2] == 6)
@@ -831,11 +839,7 @@ check_burst_gf(unsigned int *values_changed)
                           }
                           start_time = time(NULL);
                        }
-#ifdef NEW_FRA
                        if ((fra->dir_options & ONE_PROCESS_JUST_SCANNING) &&
-#else
-                       if ((fra->dir_flag & ONE_PROCESS_JUST_SCANNING) &&
-#endif
                            ((db.special_flag & DISTRIBUTED_HELPER_JOB) == 0) &&
                            (start_time >= timeup))
                        {
@@ -913,6 +917,21 @@ check_burst_gf(unsigned int *values_changed)
    }
 
    return(ret);
+}
+
+
+/*++++++++++++++++++++++++++++++ free_db() ++++++++++++++++++++++++++++++*/
+static void
+free_db(struct job *p_new_db)
+{
+   if (p_new_db->index_file != NULL)
+   {
+      free(p_new_db->index_file);
+   }
+
+   free(p_new_db);
+
+   return;
 }
 
 

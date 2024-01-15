@@ -1,6 +1,6 @@
 /*
  *  get_job_data.c - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 1998 - 2021 Holger Kiehl <Holger.Kiehl@dwd.de>
+ *  Copyright (c) 1998 - 2023 Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -43,6 +43,7 @@ DESCR__S_M3
  **   19.01.1998 H.Kiehl Created
  **   31.01.2005 H.Kiehl Store the port as well.
  **   15.04.2008 H.Kiehl Accept url's without @ sign such as http://idefix.
+ **   27.06.2023 H.Kiehl Add support for ageing.
  **
  */
 DESCR__E_M3
@@ -60,7 +61,8 @@ DESCR__E_M3
 #include "fddefs.h"
 
 /* External global variables. */
-extern int                        mdb_fd,
+extern int                        default_ageing,
+                                  mdb_fd,
                                   no_of_hosts,
                                   *no_msg_cached;
 extern char                       msg_dir[],
@@ -85,6 +87,7 @@ get_job_data(unsigned int job_id,
                 *file_buf,
                 *ptr,
                 *p_start,
+                *tmp_ptr,
                 real_hostname[MAX_REAL_HOSTNAME_LENGTH + 1],
                 host_alias[MAX_HOSTNAME_LENGTH + 1],
                 user[MAX_USER_NAME_LENGTH + 1],
@@ -117,17 +120,36 @@ retry:
    }
    if (mdb_position == -1)
    {
+#ifdef HAVE_STATX
+      struct statx stat_buf;
+#else
       struct stat stat_buf;
+#endif
 
+#ifdef HAVE_STATX
+      if (statx(fd, "", AT_STATX_SYNC_AS_STAT | AT_EMPTY_PATH,
+                STATX_SIZE | STATX_MTIME, &stat_buf) == -1)
+#else
       if (fstat(fd, &stat_buf) == -1)
+#endif
       {
          system_log(WARN_SIGN, __FILE__, __LINE__,
-                    "Failed to fstat() %s : %s", msg_dir, strerror(errno));
+#ifdef HAVE_STATX
+                    "Failed to statx() %s : %s",
+#else
+                    "Failed to fstat() %s : %s",
+#endif
+                    msg_dir, strerror(errno));
          (void)close(fd);
          return(INCORRECT);
       }
+#ifdef HAVE_STATX
+      msg_size = stat_buf.stx_size;
+      msg_mtime = stat_buf.stx_mtime.tv_sec;
+#else
       msg_size = stat_buf.st_size;
       msg_mtime = stat_buf.st_mtime;
+#endif
    }
    if ((file_buf = malloc(msg_size + 1)) == NULL)
    {
@@ -335,7 +357,6 @@ retry:
       if ((*no_msg_cached != 0) &&
           ((*no_msg_cached % MSG_CACHE_BUF_SIZE) == 0))
       {
-         char   *tmp_ptr;
          size_t new_size;
 
          new_size = (((*no_msg_cached / MSG_CACHE_BUF_SIZE) + 1) *
@@ -356,6 +377,7 @@ retry:
       (void)strcpy(mdb[*no_msg_cached - 1].host_name, host_alias);
       mdb[*no_msg_cached - 1].fsa_pos = pos;
       mdb[*no_msg_cached - 1].job_id = job_id;
+      tmp_ptr = ptr;
       if ((ptr = lposi(ptr, AGE_LIMIT_ID, AGE_LIMIT_ID_LENGTH)) == NULL)
       {
          mdb[*no_msg_cached - 1].age_limit = 0;
@@ -384,6 +406,39 @@ retry:
             mdb[*no_msg_cached - 1].age_limit = 0;
          }
       }
+      if ((ptr = lposi(tmp_ptr, AGEING_ID, AGEING_ID_LENGTH)) == NULL)
+      {
+         mdb[*no_msg_cached - 1].ageing = default_ageing;
+      }
+      else
+      {
+         int  k = 0;
+         char ageing_str[MAX_INT_LENGTH + 1];
+
+         while ((*ptr == ' ') || (*ptr == '\t'))
+         {
+            ptr++;
+         }
+         while (isdigit((int)(*ptr)))
+         {
+            ageing_str[k] = *ptr;
+            ptr++; k++;
+         }
+         if (k > 0)
+         {
+            ageing_str[k] = '\0';
+            mdb[*no_msg_cached - 1].ageing = atoi(ageing_str);
+            if ((mdb[*no_msg_cached - 1].ageing < MIN_AGEING_VALUE) ||
+                (mdb[*no_msg_cached - 1].ageing > MAX_AGEING_VALUE))
+            {
+               mdb[*no_msg_cached - 1].ageing = default_ageing;
+            }
+         }
+         else
+         {
+            mdb[*no_msg_cached - 1].ageing = default_ageing;
+         }
+      }
       mdb[*no_msg_cached - 1].type = protocol;
       mdb[*no_msg_cached - 1].port = port;
       mdb[*no_msg_cached - 1].msg_time = msg_mtime;
@@ -394,6 +449,7 @@ retry:
       (void)strcpy(mdb[mdb_position].host_name, host_alias);
       mdb[mdb_position].fsa_pos = pos;
       mdb[mdb_position].job_id = job_id;
+      tmp_ptr = ptr;
       if ((ptr = lposi(ptr, AGE_LIMIT_ID, AGE_LIMIT_ID_LENGTH)) == NULL)
       {
          mdb[mdb_position].age_limit = 0;
@@ -420,6 +476,39 @@ retry:
          else
          {
             mdb[mdb_position].age_limit = 0;
+         }
+      }
+      if ((ptr = lposi(tmp_ptr, AGEING_ID, AGEING_ID_LENGTH)) == NULL)
+      {
+         mdb[mdb_position].ageing = default_ageing;
+      }
+      else
+      {
+         int  k = 0;
+         char ageing_str[MAX_INT_LENGTH + 1];
+
+         while ((*ptr == ' ') || (*ptr == '\t'))
+         {
+            ptr++;
+         }
+         while (isdigit((int)(*ptr)))
+         {
+            ageing_str[k] = *ptr;
+            ptr++; k++;
+         }
+         if (k > 0)
+         {
+            ageing_str[k] = '\0';
+            mdb[mdb_position].ageing = atoi(ageing_str);
+            if ((mdb[mdb_position].ageing < MIN_AGEING_VALUE) ||
+                (mdb[mdb_position].ageing > MAX_AGEING_VALUE))
+            {
+               mdb[mdb_position].ageing = default_ageing;
+            }
+         }
+         else
+         {
+            mdb[mdb_position].ageing = default_ageing;
          }
       }
       mdb[mdb_position].type = protocol;

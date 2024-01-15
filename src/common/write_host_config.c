@@ -1,7 +1,7 @@
 /*
  *  write_host_config.c - Part of AFD, an automatic file distribution
  *                        program.
- *  Copyright (c) 1997 - 2022 Deutscher Wetterdienst (DWD),
+ *  Copyright (c) 1997 - 2023 Deutscher Wetterdienst (DWD),
  *                            Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
@@ -65,6 +65,7 @@ DESCR__S_M3
  **   04.03.2017 H.Kiehl Added group support.
  **   19.07.2019 H.Kiehl Simulation mode is now stored in HOST_CONFIG.
  **   26.01.2022 H.Kiehl Added protocol options 2.
+ **   18.02.2023 H.Kiehl Added 'OPTS UTF8 ON' option for FTP server.
  **
  */
 DESCR__E_M3
@@ -85,7 +86,7 @@ DESCR__E_M3
 #                Host configuration file for the AFD\n\
 #                ===================================\n\
 #\n\
-# There are 22 parameters that can be configured for each remote\n\
+# There are 24 parameters that can be configured for each remote\n\
 # host. They are:\n\
 #\n\
 # Protocol options 2      <-----------------------------------------------------+\n\
@@ -102,7 +103,7 @@ DESCR__E_M3
 # |   |   |   |  |  |  |  |  |  |   |  |  |  |  |   +-----> Transfer rate limit\n\
 # |   |   |   |  |  |  |  |  |  |   |  |  |  |  +---------> Protocol options\n\
 # |   |   |   |  |  |  |  |  |  |   |  |  |  +------------> Host status\n\
-# |   |   |   |  |  |  |  |  |  |   |  |  +---------------> Number of no bursts\n\
+# |   |   |   |  |  |  |  |  |  |   |  |  +---------------> Number of no bursts (not used)\n\
 # |   |   |   |  |  |  |  |  |  |   |  +------------------> Transfer timeout\n\
 # |   |   |   |  |  |  |  |  |  |   +---------------------> File size offset\n\
 # |   |   |   |  |  |  |  |  |  +-------------------------> Successful retries\n\
@@ -130,7 +131,7 @@ DESCR__E_M3
 #                Host configuration file for the AFD\n\
 #                ===================================\n\
 #\n\
-# There are 20 parameters that can be configured for each remote\n\
+# There are 22 parameters that can be configured for each remote\n\
 # host. They are:\n\
 #\n\
 # Protocol options 2      <-----------------------------------------------+\n\
@@ -145,7 +146,7 @@ DESCR__E_M3
 # |   |   |   |  |  |  |  |  |  |   |  |  |  |  |   +-----> Transfer rate limit\n\
 # |   |   |   |  |  |  |  |  |  |   |  |  |  |  +---------> Protocol options\n\
 # |   |   |   |  |  |  |  |  |  |   |  |  |  +------------> Host status\n\
-# |   |   |   |  |  |  |  |  |  |   |  |  +---------------> Number of no bursts\n\
+# |   |   |   |  |  |  |  |  |  |   |  |  +---------------> Number of no bursts (not used)\n\
 # |   |   |   |  |  |  |  |  |  |   |  +------------------> Transfer timeout\n\
 # |   |   |   |  |  |  |  |  |  |   +---------------------> File size offset\n\
 # |   |   |   |  |  |  |  |  |  +-------------------------> Successful retries\n\
@@ -190,7 +191,7 @@ DESCR__E_M3
 #                          DEFAULT: None (Empty)\n\
 # Allowed transfers      - The maximum number of parallel transfers for this\n\
 #                          host.\n\
-#                          DEFAULT: 2\n\
+#                          DEFAULT: 3\n\
 # Max. errors            - If max. errors is reached the destination identifier\n\
 #                          turns 'red'. If error retries reaches twice max.\n\
 #                          errors the queue of this host will be paused.\n\
@@ -229,12 +230,7 @@ DESCR__E_M3
 # Transfer timeout       - The time how long the AFD should wait for a reply\n\
 #                          from the remote site.\n\
 #                          DEFAULT: 120\n\
-# Number of no bursts    - This option applies only to FTP transfers. A burst\n\
-#                          is when a new job is appended to a transferring\n\
-#                          job. It can happen that jobs get constantly appended\n\
-#                          while other jobs with a higher priority have to wait.\n\
-#                          Therefor it is possible to state the number of\n\
-#                          connections that may NOT burst.\n\
+# Number of no bursts    - This option is not used.\n\
 #                          DEFAULT: 0\n\
 # Host status            - This indicates the status of the host, currently\n\
 #                          only bits number 1, 2, 3, 6 and 7 can be set. The\n\
@@ -286,17 +282,17 @@ DESCR__E_M3
 #                          23(4194304) - TLS uses strict verification of host.\n\
 #                          24(8388608) - Disables FTP MLST for directory listing.\n\
 #                          25(16777216)- Disconnect after given keep connected time.\n\
-#                          26(33554432)- Disable SSH stricht host key checking.\n\
+#                          26(33554432)- Disable SSH strict host key checking.\n\
 #                          27(67108864)- Enable FTP STAT listing.\n\
 #                          28(134217728)- Set implicit FTPS.\n\
 #                          30(536870912)- Do not use HTTP expect.\n\
 #                          31(1073741824)- Bucketname is in path.\n\
 #                          32(2147483648)- TLS legacy renegotiation.\n\
-#                          DEFAULT: 0\n\
+#                          DEFAULT: 1\n\
 # Transfer rate limit    - The maximum number of kilobytes that may be\n\
-#                          transfered per second.\n\
+#                          transferred per second.\n\
 #                          DEFAULT: 0 (Disabled)\n\
-# TTL                    - The time-to-live for outgoing multicasts.\n\
+# TTL                    - The time-to-live for outgoing multicast.\n\
 # Socket send buffer     - How large the socket send buffer should be in\n\
 #                          bytes. If this is zero it will leave it unchanged\n\
 #                          ie. it will leave the system default.\n\
@@ -344,7 +340,7 @@ DESCR__E_M3
 #                          successful the script/program is called again with\n\
 #                          the parameter 'stop'.\n\
 #                          DEFAULT: 0\n\
-# Protocol options 2     - For future use.\n\
+# Protocol options 2     - 1 (1)       - FTP send OPTS UTF8 ON\n\
 #                          DEFAULT: 0\n\
 #\n\
 # Example entry:\n\
@@ -405,7 +401,11 @@ write_host_config(int              no_of_hosts,
                  *new_name,
                  *ptr,
                  tmp_real_hostname[2][MAX_REAL_HOSTNAME_LENGTH + MAX_REAL_HOSTNAME_LENGTH];
+#ifdef HAVE_STATX
+   struct statx  stat_buf;
+#else
    struct stat   stat_buf;
+#endif
 
    if ((lock_fd = lock_file(host_config_file, ON)) == INCORRECT)
    {
@@ -513,48 +513,24 @@ write_host_config(int              no_of_hosts,
 #endif
                            MAX_INT_LENGTH +
                            MAX_TIME_T_LENGTH +
-#ifdef NEW_FSA
                            MAX_INT_LENGTH +
-# ifdef WITH_DUP_CHECK
+#ifdef WITH_DUP_CHECK
                            23 +
-# else
-                           21 +
-# endif
 #else
-# ifdef WITH_DUP_CHECK
-                           22 +
-# else
-                           20 +
-# endif
+                           21 +
 #endif
                            2,
-#ifdef NEW_FSA
-# ifdef WITH_DUP_CHECK
-#  if SIZEOF_TIME_T == 4
+#ifdef WITH_DUP_CHECK
+# if SIZEOF_TIME_T == 4
                            "%s:%s:%s:%s:%s:%d:%d:%d:%d:%d:%d:%ld:%d:%u:%u:%d:%d:%u:%u:%ld:%u:%u:%ld:%u\n",
-#  else
-                           "%s:%s:%s:%s:%s:%d:%d:%d:%d:%d:%d:%ld:%d:%u:%u:%d:%d:%u:%u:%lld:%u:%u:%lld:%u\n",
-#  endif
 # else
-#  if SIZEOF_TIME_T == 4
-                           "%s:%s:%s:%s:%s:%d:%d:%d:%d:%d:%d:%ld:%d:%u:%u:%d:%d:%u:%u:%u:%ld:%u\n",
-#  else
-                           "%s:%s:%s:%s:%s:%d:%d:%d:%d:%d:%d:%ld:%d:%u:%u:%d:%d:%u:%u:%u:%lld:%u\n",
-#  endif
+                           "%s:%s:%s:%s:%s:%d:%d:%d:%d:%d:%d:%ld:%d:%u:%u:%d:%d:%u:%u:%lld:%u:%u:%lld:%u\n",
 # endif
 #else
-# ifdef WITH_DUP_CHECK
-#  if SIZEOF_TIME_T == 4
-                           "%s:%s:%s:%s:%s:%d:%d:%d:%d:%d:%d:%ld:%d:%u:%u:%d:%d:%u:%u:%ld:%u:%u:%ld\n",
-#  else
-                           "%s:%s:%s:%s:%s:%d:%d:%d:%d:%d:%d:%ld:%d:%u:%u:%d:%d:%u:%u:%lld:%u:%u:%lld\n",
-#  endif
+# if SIZEOF_TIME_T == 4
+                           "%s:%s:%s:%s:%s:%d:%d:%d:%d:%d:%d:%ld:%d:%u:%u:%d:%d:%u:%u:%u:%ld:%u\n",
 # else
-#  if SIZEOF_TIME_T == 4
-                           "%s:%s:%s:%s:%s:%d:%d:%d:%d:%d:%d:%ld:%d:%u:%u:%d:%d:%u:%u:%u:%ld\n",
-#  else
-                           "%s:%s:%s:%s:%s:%d:%d:%d:%d:%d:%d:%ld:%d:%u:%u:%d:%d:%u:%u:%u:%lld\n",
-#  endif
+                           "%s:%s:%s:%s:%s:%d:%d:%d:%d:%d:%d:%ld:%d:%u:%u:%d:%d:%u:%u:%u:%lld:%u\n",
 # endif
 #endif
                            p_hl[i].host_alias,
@@ -585,12 +561,8 @@ write_host_config(int              no_of_hosts,
                            p_hl[i].dup_check_flag,
 #endif
                            p_hl[i].keep_connected,
-#ifdef NEW_FSA
                            (pri_time_t)p_hl[i].warn_time,
                            p_hl[i].protocol_options2);
-#else
-                           (pri_time_t)p_hl[i].warn_time);
-#endif
       }
 
       if (write(fd, line_buffer, length) != length)
@@ -641,15 +613,31 @@ write_host_config(int              no_of_hosts,
    }
    free(new_name);
 
+#ifdef HAVE_STATX
+   if (statx(0, host_config_file, AT_STATX_SYNC_AS_STAT,
+# ifdef GROUP_CAN_WRITE
+             STATX_MODE |
+# endif
+             STATX_MTIME, &stat_buf) == -1)
+#else
    if (stat(host_config_file, &stat_buf) == -1)
+#endif
    {
       system_log(FATAL_SIGN, __FILE__, __LINE__,
+#ifdef HAVE_STATX
+                 _("Failed to statx() `%s' : %s"),
+#else
                  _("Failed to stat() `%s' : %s"),
+#endif
                  host_config_file, strerror(errno));
       exit(INCORRECT);
    }
 #ifdef GROUP_CAN_WRITE
+# ifdef HAVE_STATX
+   if (stat_buf.stx_mode != (S_IFREG | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP))
+# else
    if (stat_buf.st_mode != (S_IFREG | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP))
+# endif
    {
       if (chmod(host_config_file,
                 (S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP)) == -1)
@@ -661,7 +649,11 @@ write_host_config(int              no_of_hosts,
       }
    }
 #endif
+#ifdef HAVE_STATX
+   mod_time = stat_buf.stx_mtime.tv_sec;
+#else
    mod_time = stat_buf.st_mtime;
+#endif
 
    return(mod_time);
 }

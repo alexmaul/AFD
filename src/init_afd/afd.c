@@ -1,6 +1,6 @@
 /*
  *  afd.c - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 1996 - 2020 Deutscher Wetterdienst (DWD),
+ *  Copyright (c) 1996 - 2023 Deutscher Wetterdienst (DWD),
  *                            Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
@@ -174,26 +174,32 @@ static void       usage(char *);
 int
 main(int argc, char *argv[])
 {
-   int         afd_ctrl_perm,
-               dry_run = NO,
-               initialize_perm,
-               init_level = 0,
-               ret,
-               startup_perm,
-               start_up,
-               stop_all = NO,
-               shutdown_perm,
-               user_offset;
-   long        default_heartbeat_timeout = DEFAULT_HEARTBEAT_TIMEOUT;
-   char        auto_block_file[MAX_PATH_LENGTH],
-               exec_cmd[AFD_CTRL_LENGTH + 1],
-               fake_user[MAX_FULL_USER_ID_LENGTH],
-               *perm_buffer,
-               profile[MAX_PROFILE_NAME_LENGTH + 1],
-               sys_log_fifo[MAX_PATH_LENGTH],
-               user[MAX_FULL_USER_ID_LENGTH],
-               work_dir[MAX_PATH_LENGTH];
-   struct stat stat_buf;
+   int          afd_ctrl_perm,
+                dry_run = NO,
+                initialize_perm,
+                init_level = 0,
+                ret,
+                startup_perm,
+                start_up,
+#ifdef WITH_SYSTEMD
+                stop_all = NO,
+#endif
+                shutdown_perm,
+                user_offset;
+   long         default_heartbeat_timeout = DEFAULT_HEARTBEAT_TIMEOUT;
+   char         auto_block_file[MAX_PATH_LENGTH],
+                exec_cmd[AFD_CTRL_LENGTH + 1],
+                fake_user[MAX_FULL_USER_ID_LENGTH],
+                *perm_buffer,
+                profile[MAX_PROFILE_NAME_LENGTH + 1],
+                sys_log_fifo[MAX_PATH_LENGTH],
+                user[MAX_FULL_USER_ID_LENGTH],
+                work_dir[MAX_PATH_LENGTH];
+#ifdef HAVE_STATX
+   struct statx stat_buf;
+#else
+   struct stat  stat_buf;
+#endif
 
    CHECK_FOR_VERSION(argc, argv);
    if ((argc > 1) &&
@@ -485,11 +491,13 @@ main(int argc, char *argv[])
                                   user);
                     exit(INCORRECT);
                  }
+#ifdef WITH_SYSTEMD
                  if ((argc == 3) &&
                      (my_strcmp(argv[2], "--all") == 0))
                  {
                     stop_all = YES;
                  }
+#endif
                  start_up = SHUTDOWN_ONLY;
               }
          else if (my_strcmp(argv[1], "-S") == 0) /* Silent AFD shutdown. */
@@ -501,11 +509,13 @@ main(int argc, char *argv[])
                                   user);
                     exit(INCORRECT);
                  }
+#ifdef WITH_SYSTEMD
                  if ((argc == 3) &&
                      (my_strcmp(argv[2], "--all") == 0))
                  {
                     stop_all = YES;
                  }
+#endif
                  start_up = SILENT_SHUTDOWN_ONLY;
               }
          else if (my_strcmp(argv[1], "-r") == 0) /* Removes blocking file. */
@@ -620,7 +630,12 @@ main(int argc, char *argv[])
    (void)strcat(afd_cmd_fifo, AFD_CMD_FIFO);
    (void)strcat(afd_active_file, AFD_ACTIVE_FILE);
 
+#ifdef HAVE_STATX
+   if ((statx(0, sys_log_fifo, AT_STATX_SYNC_AS_STAT,
+              STATX_MODE, &stat_buf) == -1) || (!S_ISFIFO(stat_buf.stx_mode)))
+#else
    if ((stat(sys_log_fifo, &stat_buf) == -1) || (!S_ISFIFO(stat_buf.st_mode)))
+#endif
    {
       if (make_fifo(sys_log_fifo) < 0)
       {
@@ -1163,16 +1178,29 @@ main(int argc, char *argv[])
                             __FILE__, __LINE__);
               exit(INCORRECT);
            }
+#ifdef HAVE_STATX
+           if (statx(fd, "", AT_STATX_SYNC_AS_STAT | AT_EMPTY_PATH,
+                     STATX_SIZE, &stat_buf) == -1)
+#else
            if (fstat(fd, &stat_buf) == -1)
+#endif
            {
               (void)fprintf(stderr,
+#ifdef HAVE_STATX
+                            _("ERROR   : Failed to statx() `%s' : %s (%s %d)\n"),
+#else
                             _("ERROR   : Failed to fstat() `%s' : %s (%s %d)\n"),
+#endif
                             afd_active_file, strerror(errno),
                             __FILE__, __LINE__);
               exit(INCORRECT);
            }
            offset = ((NO_OF_PROCESS + 1) * sizeof(pid_t)) + sizeof(unsigned int) + 1 + 1;
+#ifdef HAVE_STATX
+           if ((offset + 1) != stat_buf.stx_size)
+#else
            if ((offset + 1) != stat_buf.st_size)
+#endif
            {
               (void)fprintf(stderr,
 #if SIZEOF_OFF_T == 4
@@ -1181,7 +1209,12 @@ main(int argc, char *argv[])
                             _("ERROR   : Unable to set shutdown bit due to incorrect size (%lld != %lld) of %s.\n"),
 #endif
                             (pri_off_t)(offset + 1),
-                            (pri_off_t)stat_buf.st_size, afd_active_file);
+#ifdef HAVE_STATX
+                            (pri_off_t)stat_buf.stx_size,
+#else
+                            (pri_off_t)stat_buf.st_size,
+#endif
+                            afd_active_file);
               exit(INCORRECT);
            }
 #ifdef HAVE_MMAP
@@ -1334,7 +1367,8 @@ usage(char *progname)
    (void)fprintf(stderr, _("                              level of initialization. The higher the number\n"));
    (void)fprintf(stderr, _("                              the more data will be deleted. If no number is\n"));
    (void)fprintf(stderr, _("                              specified the level will be 5. 9 is the same\n"));
-   (void)fprintf(stderr, _("                              as -I below.\n"));
+   (void)fprintf(stderr, _("                              as -I below. As of a level 7 it will not try\n"));
+   (void)fprintf(stderr, _("                              to restore any values set via afdcfg.\n"));
    (void)fprintf(stderr, _("    -I                        initialize AFD, by deleting everything\n"));
    (void)fprintf(stderr, _("                              except for etc directory\n"));
    (void)fprintf(stderr, _("    -n                        in combination with -i or -I just print\n"));

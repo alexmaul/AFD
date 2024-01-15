@@ -1,6 +1,6 @@
 /*
  *  common.c - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 2004 - 2022 Holger Kiehl <Holger.Kiehl@dwd.de>
+ *  Copyright (c) 2004 - 2023 Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -121,11 +121,25 @@ command(int fd, char *fmt, ...)
 #endif
       if (write(fd, buf, length) != length)
       {
+         char *sign;
+
          if ((errno == ECONNRESET) || (errno == EBADF) || (errno == EPIPE))
          {
             timeout_flag = CON_RESET;
+            if (errno == EPIPE)
+            {
+               sign = INFO_SIGN;
+            }
+            else
+            {
+               sign = ERROR_SIGN;
+            }
          }
-         trans_log(ERROR_SIGN, __FILE__, __LINE__, "command", NULL,
+         else
+         {
+            sign = ERROR_SIGN;
+         }
+         trans_log(sign, __FILE__, __LINE__, "command", NULL,
                    _("write() error : %s"), strerror(errno));
          ptr = buf;
          do
@@ -556,7 +570,7 @@ ssl_connect(int  sock_fd,
 
             issuer = rfc2253_formatted(X509_get_issuer_name(cert));
             subject = rfc2253_formatted(X509_get_subject_name(cert));
-            trans_log(DEBUG_SIGN, __FILE__, __LINE__, "http_connect", NULL,
+            trans_log(DEBUG_SIGN, __FILE__, __LINE__, "ssl_connect", NULL,
                       "<CERT subject: %s issuer: %s>", subject, issuer);
             free(subject);
 
@@ -636,14 +650,30 @@ ssl_write(SSL *ssl, const char *buf, size_t count)
                break;
 
             case SSL_ERROR_SYSCALL :
-               if ((errno == ECONNRESET) || (errno == EBADF) ||
-                   (errno == EPIPE))
                {
-                  timeout_flag = CON_RESET;
+                  char *sign;
+
+                  if ((errno == ECONNRESET) || (errno == EBADF) ||
+                      (errno == EPIPE))
+                  {
+                     timeout_flag = CON_RESET;
+                     if (errno == EPIPE)
+                     {
+                        sign = INFO_SIGN;
+                     }
+                     else
+                     {
+                        sign = ERROR_SIGN;
+                     }
+                  }
+                  else
+                  {
+                     sign = ERROR_SIGN;
+                  }
+                  trans_log(sign, __FILE__, __LINE__, "ssl_write", NULL,
+                            _("SSL_write() error (%d) : %s"),
+                            ret, strerror(errno));
                }
-               trans_log(ERROR_SIGN, __FILE__, __LINE__, "ssl_write", NULL,
-                         _("SSL_write() error (%d) : %s"),
-                         ret, strerror(errno));
                return(INCORRECT);
 
             default : /* Error */

@@ -1,7 +1,7 @@
 /*
  *  get_remote_file_names_ftp.c - Part of AFD, an automatic file distribution
  *                                program.
- *  Copyright (c) 2000 - 2022 Holger Kiehl <Holger.Kiehl@dwd.de>
+ *  Copyright (c) 2000 - 2024 Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -109,7 +109,9 @@ get_remote_file_names_ftp(off_t        *file_size_to_retrieve,
        i = 0;
 
    *file_size_to_retrieve = 0;
-   if ((fra->stupid_mode == GET_ONCE_ONLY) && (fra->ignore_file_time == 0))
+   if (((fra->stupid_mode == GET_ONCE_ONLY) ||
+        (fra->stupid_mode == GET_ONCE_NOT_EXACT)) &&
+       (fra->ignore_file_time == 0))
    {
       get_date = NO;
    }
@@ -229,6 +231,7 @@ try_attach_again:
                            if ((status = ftp_date(rl[i].file_name,
                                                   &file_mtime)) == SUCCESS)
                            {
+                              rl[i].special_flag |= RL_GOT_EXACT_DATE;
                               rl[i].file_mtime = file_mtime;
                               rl[i].got_date = YES;
                               if (fsa->debug > NORMAL_MODE)
@@ -287,6 +290,7 @@ try_attach_again:
                         if ((status = ftp_date(rl[i].file_name,
                                                &file_mtime)) == SUCCESS)
                         {
+                           rl[i].special_flag |= RL_GOT_EXACT_DATE;
                            rl[i].file_mtime = file_mtime;
                            rl[i].got_date = YES;
                            if (fsa->debug > NORMAL_MODE)
@@ -345,6 +349,7 @@ try_attach_again:
 
                      if ((status = ftp_size(rl[i].file_name, &size)) == SUCCESS)
                      {
+                        rl[i].special_flag |= RL_GOT_EXACT_SIZE;
                         rl[i].size = size;
                         if (fsa->debug > NORMAL_MODE)
                         {
@@ -392,7 +397,7 @@ try_attach_again:
 
                   if ((fra->ignore_size == -1) ||
                       ((fra->gt_lt_sign & ISIZE_EQUAL) &&
-                       (fra->ignore_size == rl[i].size)) ||
+                       (fra->ignore_size != rl[i].size)) ||
                       ((fra->gt_lt_sign & ISIZE_LESS_THEN) &&
                        (fra->ignore_size < rl[i].size)) ||
                       ((fra->gt_lt_sign & ISIZE_GREATER_THEN) &&
@@ -414,11 +419,7 @@ try_attach_again:
                               *file_size_to_retrieve += rl[i].size;
                            }
                         }
-#ifdef NEW_FRA
                         if (((fra->dir_options & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#else
-                        if (((fra->dir_flag & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#endif
                             (db.special_flag & DISTRIBUTED_HELPER_JOB))
                         {
                            rl[i].assigned = (unsigned char)db.job_no + 1;
@@ -434,7 +435,7 @@ try_attach_again:
 
                         diff_time = current_time - rl[i].file_mtime;
                         if (((fra->gt_lt_sign & IFTIME_EQUAL) &&
-                             (fra->ignore_file_time == diff_time)) ||
+                             (fra->ignore_file_time != diff_time)) ||
                             ((fra->gt_lt_sign & IFTIME_LESS_THEN) &&
                              (fra->ignore_file_time < diff_time)) ||
                             ((fra->gt_lt_sign & IFTIME_GREATER_THEN) &&
@@ -453,11 +454,7 @@ try_attach_again:
                                  *file_size_to_retrieve += rl[i].size;
                               }
                            }
-#ifdef NEW_FRA
                            if (((fra->dir_options & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#else
-                           if (((fra->dir_flag & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#endif
                                (db.special_flag & DISTRIBUTED_HELPER_JOB))
                            {
                               rl[i].assigned = (unsigned char)db.job_no + 1;
@@ -742,11 +739,7 @@ do_scan(int          *files_to_retrieve,
          {
             p_list += 2;
          }
-#ifdef NEW_FRA
          if ((*p_list != '.') || (fra->dir_options & ACCEPT_DOT_FILES))
-#else
-         if ((*p_list != '.') || (fra->dir_flag & ACCEPT_DOT_FILES))
-#endif
          {
             *p_end = '\0';
             list_length++;
@@ -954,6 +947,14 @@ do_scan(int          *files_to_retrieve,
 
       for (i = 0; i < (no_of_listed_files - files_removed); i++)
       {
+         if (i >= *current_no_of_listed_files)
+         {
+            trans_log(DEBUG_SIGN, __FILE__, __LINE__, NULL, NULL,
+                      "no_of_listed_files has been reduced (%d -> %d)!",
+                      no_of_listed_files, *current_no_of_listed_files);
+            no_of_listed_files = *current_no_of_listed_files;
+            break;
+         }
          if (rl[i].in_list == NO)
          {
             int j = i;
@@ -1060,6 +1061,14 @@ check_list(char         *file,
    {
       for (i = 0; i < no_of_listed_files; i++)
       {
+         if (i >= *current_no_of_listed_files)
+         {
+            trans_log(DEBUG_SIGN, __FILE__, __LINE__, NULL, NULL,
+                      "no_of_listed_files has been reduced (%d -> %d)!",
+                      no_of_listed_files, *current_no_of_listed_files);
+            no_of_listed_files = *current_no_of_listed_files;
+            break;
+         }
          if (CHECK_STRCMP(rl[i].file_name, file) == 0)
          {
             rl[i].in_list = YES;
@@ -1082,6 +1091,7 @@ check_list(char         *file,
 
                   if ((status = ftp_date(file, &file_mtime)) == SUCCESS)
                   {
+                     rl[i].special_flag |= RL_GOT_EXACT_DATE;
                      rl[i].got_date = YES;
                      rl[i].file_mtime = file_mtime;
                      if (fsa->debug > NORMAL_MODE)
@@ -1128,6 +1138,7 @@ check_list(char         *file,
 
                   if ((status = ftp_size(file, &size)) == SUCCESS)
                   {
+                     rl[i].special_flag |= RL_GOT_EXACT_SIZE;
                      rl[i].size = size;
                      if (fsa->debug > NORMAL_MODE)
                      {
@@ -1163,7 +1174,7 @@ check_list(char         *file,
 
                if ((fra->ignore_size == -1) ||
                    ((fra->gt_lt_sign & ISIZE_EQUAL) &&
-                    (fra->ignore_size == rl[i].size)) ||
+                    (fra->ignore_size != rl[i].size)) ||
                    ((fra->gt_lt_sign & ISIZE_LESS_THEN) &&
                     (fra->ignore_size < rl[i].size)) ||
                    ((fra->gt_lt_sign & ISIZE_GREATER_THEN) &&
@@ -1187,11 +1198,7 @@ check_list(char         *file,
 #endif
                      {
                         rl[i].retrieved = NO;
-#ifdef NEW_FRA
                         if (((fra->dir_options & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#else
-                        if (((fra->dir_flag & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#endif
                             (db.special_flag & DISTRIBUTED_HELPER_JOB))
                         {
                            rl[i].assigned = (unsigned char)db.job_no + 1;
@@ -1221,7 +1228,7 @@ check_list(char         *file,
                      *file_mtime = rl[i].file_mtime;
                      diff_time = current_time - rl[i].file_mtime;
                      if (((fra->gt_lt_sign & IFTIME_EQUAL) &&
-                          (fra->ignore_file_time == diff_time)) ||
+                          (fra->ignore_file_time != diff_time)) ||
                          ((fra->gt_lt_sign & IFTIME_LESS_THEN) &&
                           (fra->ignore_file_time < diff_time)) ||
                          ((fra->gt_lt_sign & IFTIME_GREATER_THEN) &&
@@ -1240,11 +1247,7 @@ check_list(char         *file,
 #endif
                         {
                            rl[i].retrieved = NO;
-#ifdef NEW_FRA
                            if (((fra->dir_options & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#else
-                           if (((fra->dir_flag & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#endif
                                (db.special_flag & DISTRIBUTED_HELPER_JOB))
                            {
                               rl[i].assigned = (unsigned char)db.job_no + 1;
@@ -1310,21 +1313,26 @@ check_list(char         *file,
    {
       for (i = 0; i < no_of_listed_files; i++)
       {
+         if (i >= *current_no_of_listed_files)
+         {
+            trans_log(DEBUG_SIGN, __FILE__, __LINE__, NULL, NULL,
+                      "no_of_listed_files has been reduced (%d -> %d)!",
+                      no_of_listed_files, *current_no_of_listed_files);
+            no_of_listed_files = *current_no_of_listed_files;
+            break;
+         }
          if (CHECK_STRCMP(rl[i].file_name, file) == 0)
          {
             rl[i].in_list = YES;
             if ((rl[i].assigned != 0) ||
-                ((fra->stupid_mode == GET_ONCE_ONLY) &&
-                 ((rl[i].special_flag & RL_GOT_EXACT_SIZE_DATE) ||
+                (((fra->stupid_mode == GET_ONCE_ONLY) ||
+                  (fra->stupid_mode == GET_ONCE_NOT_EXACT)) &&
+                 ((rl[i].special_flag & RL_GOT_SIZE_DATE) ||
                   (rl[i].retrieved == YES))))
             {
                if ((rl[i].retrieved == NO) && (rl[i].assigned == 0))
                {
-#ifdef NEW_FRA
                   if (((fra->dir_options & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#else
-                  if (((fra->dir_flag & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#endif
                       (db.special_flag & DISTRIBUTED_HELPER_JOB))
                   {
                      rl[i].assigned = (unsigned char)db.job_no + 1;
@@ -1359,6 +1367,7 @@ check_list(char         *file,
                      rl[i].got_date = YES;
                      if (rl[i].file_mtime != file_mtime)
                      {
+                        rl[i].special_flag |= RL_GOT_EXACT_DATE;
                         rl[i].file_mtime = file_mtime;
                         rl[i].retrieved = NO;
                         rl[i].assigned = 0;
@@ -1404,7 +1413,9 @@ check_list(char         *file,
 
                /* Try to get remote size. */
                if ((check_size == YES) &&
-                   ((fra->stupid_mode != GET_ONCE_ONLY) || (rl[i].size == -1)))
+                   (((fra->stupid_mode != GET_ONCE_ONLY) &&
+                     (fra->stupid_mode != GET_ONCE_NOT_EXACT)) ||
+                    (rl[i].size == -1)))
                {
                   off_t size;
 
@@ -1412,6 +1423,7 @@ check_list(char         *file,
                   {
                      if (rl[i].size != size)
                      {
+                        rl[i].special_flag |= RL_GOT_EXACT_SIZE;
                         prev_size = rl[i].size;
                         rl[i].size = size;
                         rl[i].retrieved = NO;
@@ -1457,7 +1469,7 @@ check_list(char         *file,
                {
                   if ((fra->ignore_size == -1) ||
                       ((fra->gt_lt_sign & ISIZE_EQUAL) &&
-                       (fra->ignore_size == rl[i].size)) ||
+                       (fra->ignore_size != rl[i].size)) ||
                       ((fra->gt_lt_sign & ISIZE_LESS_THEN) &&
                        (fra->ignore_size < rl[i].size)) ||
                       ((fra->gt_lt_sign & ISIZE_GREATER_THEN) &&
@@ -1496,11 +1508,7 @@ check_list(char         *file,
                             ((*file_size_to_retrieve + size_to_retrieve) < fra->max_copied_file_size))
 #endif
                         {
-#ifdef NEW_FRA
                            if (((fra->dir_options & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#else
-                           if (((fra->dir_flag & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#endif
                                (db.special_flag & DISTRIBUTED_HELPER_JOB))
                            {
                               rl[i].assigned = (unsigned char)db.job_no + 1;
@@ -1527,7 +1535,7 @@ check_list(char         *file,
                         *file_mtime = rl[i].file_mtime;
                         diff_time = current_time - rl[i].file_mtime;
                         if (((fra->gt_lt_sign & IFTIME_EQUAL) &&
-                             (fra->ignore_file_time == diff_time)) ||
+                             (fra->ignore_file_time != diff_time)) ||
                             ((fra->gt_lt_sign & IFTIME_LESS_THEN) &&
                              (fra->ignore_file_time < diff_time)) ||
                             ((fra->gt_lt_sign & IFTIME_GREATER_THEN) &&
@@ -1560,11 +1568,7 @@ check_list(char         *file,
                                ((*file_size_to_retrieve + size_to_retrieve) < fra->max_copied_file_size))
 #endif
                            {
-#ifdef NEW_FRA
                               if (((fra->dir_options & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#else
-                              if (((fra->dir_flag & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#endif
                                   (db.special_flag & DISTRIBUTED_HELPER_JOB))
                               {
                                  rl[i].assigned = (unsigned char)db.job_no + 1;
@@ -1689,6 +1693,7 @@ check_list(char         *file,
 
             if ((status = ftp_date(file, &file_mtime)) == SUCCESS)
             {
+               rl[no_of_listed_files].special_flag |= RL_GOT_EXACT_DATE;
                rl[no_of_listed_files].file_mtime = file_mtime;
                rl[no_of_listed_files].got_date = YES;
                if (fsa->debug > NORMAL_MODE)
@@ -1735,6 +1740,7 @@ check_list(char         *file,
 
          if ((status = ftp_date(file, &file_mtime)) == SUCCESS)
          {
+            rl[no_of_listed_files].special_flag |= RL_GOT_EXACT_DATE;
             rl[no_of_listed_files].file_mtime = file_mtime;
             rl[no_of_listed_files].got_date = YES;
             if (fsa->debug > NORMAL_MODE)
@@ -1783,6 +1789,7 @@ check_list(char         *file,
       if ((status = ftp_size(file, &size)) == SUCCESS)
       {
          rl[no_of_listed_files].size = size;
+         rl[no_of_listed_files].special_flag |= RL_GOT_EXACT_SIZE;
          *file_size_to_retrieve += size;
          *files_to_retrieve += 1;
          if (fsa->debug > NORMAL_MODE)
@@ -1833,11 +1840,11 @@ check_list(char         *file,
    }
    if ((*file_mtime != -1) && (rl[no_of_listed_files].size != -1))
    {
-      rl[no_of_listed_files].special_flag |= RL_GOT_EXACT_SIZE_DATE;
+      rl[no_of_listed_files].special_flag |= RL_GOT_SIZE_DATE;
    }
    if ((fra->ignore_size == -1) ||
        ((fra->gt_lt_sign & ISIZE_EQUAL) &&
-        (fra->ignore_size == rl[no_of_listed_files].size)) ||
+        (fra->ignore_size != rl[no_of_listed_files].size)) ||
        ((fra->gt_lt_sign & ISIZE_LESS_THEN) &&
         (fra->ignore_size < rl[no_of_listed_files].size)) ||
        ((fra->gt_lt_sign & ISIZE_GREATER_THEN) &&
@@ -1854,7 +1861,7 @@ check_list(char         *file,
 
          diff_time = current_time - rl[no_of_listed_files].file_mtime;
          if (((fra->gt_lt_sign & IFTIME_EQUAL) &&
-              (fra->ignore_file_time == diff_time)) ||
+              (fra->ignore_file_time != diff_time)) ||
              ((fra->gt_lt_sign & IFTIME_LESS_THEN) &&
               (fra->ignore_file_time < diff_time)) ||
              ((fra->gt_lt_sign & IFTIME_GREATER_THEN) &&
@@ -1881,11 +1888,7 @@ check_list(char         *file,
           (*file_size_to_retrieve < fra->max_copied_file_size))
 #endif
       {
-#ifdef NEW_FRA
          if (((fra->dir_options & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#else
-         if (((fra->dir_flag & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#endif
              (db.special_flag & DISTRIBUTED_HELPER_JOB))
          {
             rl[no_of_listed_files - 1].assigned = (unsigned char)db.job_no + 1;

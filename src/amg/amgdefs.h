@@ -1,6 +1,6 @@
 /*
  *  amgdefs.h - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 1996 - 2021 Holger Kiehl <Holger.Kiehl@dwd.de>
+ *  Copyright (c) 1996 - 2023 Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -473,6 +473,10 @@ struct dir_data
                                             /* request is issued. This   */
                                             /* is currently only useful  */
                                             /* for HTTP.                 */
+          unsigned char url_with_index_file_name;/* The URL is with an   */
+                                            /* index file name. This is  */
+                                            /* used for non standard HTTP*/
+                                            /* index file names.         */
           unsigned char no_delimiter;       /* For AWS listing do not add*/
                                             /* a delimiter. Thus showing */
                                             /* the content of all sub    */
@@ -568,6 +572,7 @@ struct dir_data
                                             /*+----+--------------------+*/
                                             /*|Bit |      Meaning       |*/
                                             /*+----+--------------------+*/
+                                            /*|  5 | INOTIFY_ATTRIB_FLAG|*/
                                             /*|  4 | INOTIFY_DELETE_FLAG|*/
                                             /*|  3 | INOTIFY_CREATE_FLAG|*/
                                             /*|  2 | INOTIFY_CLOSE_FLAG |*/
@@ -849,9 +854,13 @@ struct wmo_rep_list
 extern int    amg_zombie_check(pid_t *, int),
               check_full_dc_name_changes(void),
               check_group_list_mtime(void),
+#ifdef HAVE_STATX
+              check_list(struct directory_entry *, char *, struct statx *),
+#else
               check_list(struct directory_entry *, char *, struct stat *),
+#endif
               check_option(char *, FILE *),
-              com(char),
+              com(char, char *, int),
               convert(char *, char *, int, int, unsigned int, unsigned int,
                       off_t *),
 #ifdef _WITH_PTHREAD
@@ -944,7 +953,8 @@ extern int    amg_zombie_check(pid_t *, int),
                                 struct host_list *),
               reread_host_config(time_t *, int *, int *, size_t *,
                                  struct host_list **, unsigned int *,
-                                 FILE *, int);
+                                 FILE *, int),
+              timezone_name_check(const char *);
 extern pid_t  make_process_amg(char *, char *, int, int, mode_t, pid_t);
 extern off_t  fax2gts(char *, char *, int);
 extern char   *check_paused_dir(struct directory_entry *, int *, int *, int *),

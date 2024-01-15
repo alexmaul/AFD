@@ -1,6 +1,6 @@
 /*
  *  reread_dir_config.c - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 1995 - 2019 Holger Kiehl <Holger.Kiehl@dwd.de>
+ *  Copyright (c) 1995 - 2023 Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -192,7 +192,7 @@ reread_dir_config(int              dc_changed,
       if (dc_changed == YES)
       {
          int   i;
-         pid_t tmp_dc_pid;
+         pid_t tmp_dc_pid = dc_pid;
 
          /* Tell user we have to reread the new DIR_CONFIG file(s). */
          system_log(INFO_SIGN, NULL, 0, "Rereading DIR_CONFIG(s)...");
@@ -200,20 +200,18 @@ reread_dir_config(int              dc_changed,
          /* Stop running jobs. */
          if ((data_length > 0) && (dc_pid > 0))
          {
-            if (com(STOP) == INCORRECT)
+            if (com(STOP, __FILE__, __LINE__) == INCORRECT)
             {
-               int status;
-
                /* If the process does not answer, lets assume */
                /* something is really wrong here and lets see */
                /* if the process has died.                    */
-               if ((status = amg_zombie_check(&dc_pid, WNOHANG)) < 0)
+               if (amg_zombie_check(&dc_pid, WNOHANG) != YES)
                {
-                  dc_pid = status;
-               }
-               else /* Mark process in unknown state. */
-               {
-                  tmp_dc_pid = dc_pid;
+                  /*
+                   * It is still alive but does not respond
+                   * so mark it as in unknown state. The pid
+                   * is already stored in tmp_dc_pid.
+                   */
                   dc_pid = UNKNOWN_STATE;
                }
             }
@@ -304,6 +302,16 @@ reread_dir_config(int              dc_changed,
                         /* Don't exit here, since the process might */
                         /* have died in the meantime.               */
                      }
+                     else
+                     {
+                        system_log(DEBUG_SIGN, __FILE__, __LINE__,
+#if SIZEOF_PID_T == 4
+                                   "Have killed %s (%d) because it was in unknown state.",
+#else
+                                   "Have killed %s (%lld) because it was in unknown state.",
+#endif
+                                   DC_PROC_NAME, (pri_pid_t)tmp_dc_pid);
+                     }
 
                      /* Eliminate zombie of killed job. */
                      (void)amg_zombie_check(&tmp_dc_pid, 0);
@@ -340,7 +348,7 @@ reread_dir_config(int              dc_changed,
                 * case there are warnings or errors they can be shown
                 * to the user that has used udc.
                 */
-               if (com(DATA_READY) != SUCCESS)
+               if (com(DATA_READY, __FILE__, __LINE__) != SUCCESS)
                {
                   system_log(DEBUG_SIGN, __FILE__, __LINE__,
                              "Process %s did not reply on DATA_READY!",
@@ -373,7 +381,7 @@ reread_dir_config(int              dc_changed,
          {
             if (dc_pid > 0)
             {
-               (void)com(STOP);
+               (void)com(STOP, __FILE__, __LINE__);
                dc_pid = NOT_RUNNING;
             }
             ret = DIR_CONFIG_NO_VALID_DATA;

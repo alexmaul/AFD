@@ -1,6 +1,6 @@
 /*
  *  init_sf.c - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 1996 - 2021 Holger Kiehl <Holger.Kiehl@dwd.de>
+ *  Copyright (c) 1996 - 2023 Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -171,12 +171,17 @@ init_sf(int argc, char *argv[], char *file_path, int protocol)
    db.dir_mode = 0;
    db.dir_mode_str[0] = '\0';
 /* db.trans_rename_rule[0] = '\0'; */
-   db.user_home_dir = NULL;
+/* db.user_home_dir = NULL; */
+   db.index_file = NULL;
 /* db.password[0] = '\0'; */
 /* db.user_rename_rule[0] = '\0'; */
    db.lock_file_name = NULL;
 /* db.rename_file_busy = '\0'; */
    db.group_list = NULL;
+   db.no_of_rhardlinks = 0;
+   db.hardlinks = NULL;
+   db.no_of_rsymlinks = 0;
+   db.symlinks = NULL;
 /* db.no_of_restart_files = 0; */
    db.restart_file = NULL;
    db.user_id = -1;

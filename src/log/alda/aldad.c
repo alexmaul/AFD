@@ -1,6 +1,6 @@
 /*
  *  aldad.c - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 2009 - 2020 Holger Kiehl <Holger.Kiehl@dwd.de>
+ *  Copyright (c) 2009 - 2023 Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -36,6 +36,11 @@ DESCR__S_M3
  **
  ** HISTORY
  **   17.01.2009 H.Kiehl Created
+ **   22.04.2023 H.Kiehl Added option --afdmon to read configuration
+ **                      from MON_CONFIG_FILE.
+ **   09.05.2023 H.Kiehl If all entries are removed and realloc() returns
+ **                      NULL, evaluate errno to check if this is the
+ **                      case.
  **
  */
 DESCR__E_M3
@@ -45,6 +50,9 @@ DESCR__E_M3
 #include <stdlib.h>               /* realloc(), free(), atexit()         */
 #include <time.h>                 /* time()                              */
 #include <sys/types.h>
+#ifdef HAVE_STATX
+# include <fcntl.h>               /* Definition of AT_* constants        */
+#endif
 #include <sys/stat.h>             /* stat()                              */
 #include <sys/wait.h>             /* waitpid()                           */
 #include <signal.h>               /* signal(), kill()                    */
@@ -56,13 +64,17 @@ DESCR__E_M3
 /* Global variables. */
 int                    no_of_process,
                        sys_log_fd = STDERR_FILENO;
-char                   afd_config_file[MAX_PATH_LENGTH + ETC_DIR_LENGTH + AFD_CONFIG_FILE_LENGTH + 1],
+char                   config_file[MAX_PATH_LENGTH + ETC_DIR_LENGTH + AFD_CONFIG_FILE_LENGTH + 1],
                        *p_work_dir;
 struct aldad_proc_list *apl = NULL;
 const char             *sys_log_name = SYSTEM_LOG_FIFO;
 
 /* Local function prototypes. */
+#ifdef WITH_AFD_MON
+static pid_t           make_process(char *, int);
+#else
 static pid_t           make_process(char *);
+#endif
 static void            aldad_exit(void),
                        sig_segv(int),
                        sig_bus(int),
@@ -74,6 +86,9 @@ static void            aldad_exit(void),
 int
 main(int argc, char *argv[])
 {
+#ifdef WITH_AFD_MON
+   int    remote_log_data;
+#endif
    time_t next_stat_time,
           now,
           old_st_mtime;
@@ -81,18 +96,36 @@ main(int argc, char *argv[])
 
    /* Evaluate input arguments. */
    CHECK_FOR_VERSION(argc, argv);
-   if (get_afd_path(&argc, argv, work_dir) < 0)
+#ifdef WITH_AFD_MON
+   if (get_arg(&argc, argv, "--afdmon", NULL, 0) == SUCCESS)
    {
-      exit(INCORRECT);
+      if (get_mon_path(&argc, argv, work_dir) < 0)
+      {
+         exit(INCORRECT);
+      }
+      (void)sprintf(config_file, "%s%s%s",
+                    work_dir, ETC_DIR, MON_CONFIG_FILE);
+      remote_log_data = YES;
    }
+   else
+   {
+#endif
+      if (get_afd_path(&argc, argv, work_dir) < 0)
+      {
+         exit(INCORRECT);
+      }
+      (void)sprintf(config_file, "%s%s%s",
+                    work_dir, ETC_DIR, AFD_CONFIG_FILE);
+#ifdef WITH_AFD_MON
+      remote_log_data = NO;
+   }
+#endif
 
    /* Initialize variables. */
    p_work_dir = work_dir;
    next_stat_time = 0L;
    old_st_mtime = 0L;
    no_of_process = 0;
-   (void)sprintf(afd_config_file, "%s%s%s",
-                 p_work_dir, ETC_DIR, AFD_CONFIG_FILE);
 
    /* Do some cleanups when we exit. */
    if (atexit(aldad_exit) != 0)
@@ -120,12 +153,25 @@ main(int argc, char *argv[])
       now = time(NULL);
       if (next_stat_time < now)
       {
+#ifdef HAVE_STATX
+         struct statx stat_buf;
+#else
          struct stat stat_buf;
+#endif
 
          next_stat_time = now + STAT_INTERVAL;
-         if (stat(afd_config_file, &stat_buf) == 0)
+#ifdef HAVE_STATX
+         if (statx(0, config_file, AT_STATX_SYNC_AS_STAT,
+                   STATX_MTIME, &stat_buf) == 0)
+#else
+         if (stat(config_file, &stat_buf) == 0)
+#endif
          {
+#ifdef HAVE_STATX
+            if (stat_buf.stx_mtime.tv_sec != old_st_mtime)
+#else
             if (stat_buf.st_mtime != old_st_mtime)
+#endif
             {
                int  i;
                char *buffer,
@@ -136,16 +182,20 @@ main(int argc, char *argv[])
                   apl[i].in_list = NO;
                }
 
+#ifdef HAVE_STATX
+               old_st_mtime = stat_buf.stx_mtime.tv_sec;
+#else
                old_st_mtime = stat_buf.st_mtime;
-               if ((eaccess(afd_config_file, F_OK) == 0) &&
-                   (read_file_no_cr(afd_config_file, &buffer, YES,
+#endif
+               if ((eaccess(config_file, F_OK) == 0) &&
+                   (read_file_no_cr(config_file, &buffer, YES,
                                     __FILE__, __LINE__) != INCORRECT))
                {
                   int  gotcha;
                   char *ptr = buffer;
 
                   system_log(DEBUG_SIGN, NULL, 0,
-                             "ALDAD read %s", afd_config_file);
+                             "ALDAD read %s", config_file);
 
                   /*
                    * Read all alda daemons entries.
@@ -187,7 +237,11 @@ main(int argc, char *argv[])
                            (void)strcpy(apl[no_of_process - 1].parameters,
                                         tmp_aldad);
                            apl[no_of_process - 1].in_list = YES;
+#ifdef WITH_AFD_MON
+                           if ((apl[no_of_process - 1].pid = make_process(apl[no_of_process - 1].parameters, remote_log_data)) == 0)
+#else
                            if ((apl[no_of_process - 1].pid = make_process(apl[no_of_process - 1].parameters)) == 0)
+#endif
                            {
                               system_log(ERROR_SIGN, __FILE__, __LINE__,
                                          "Failed to start aldad process with the following parameters : %s",
@@ -197,10 +251,13 @@ main(int argc, char *argv[])
                               if ((apl = realloc(apl,
                                                  (no_of_process * sizeof(struct aldad_proc_list)))) == NULL)
                               {
-                                 system_log(FATAL_SIGN, __FILE__, __LINE__,
-                                            "Failed to realloc() memory : %s",
-                                            strerror(errno));
-                                 exit(INCORRECT);
+                                 if (errno != 0)
+                                 {
+                                    system_log(FATAL_SIGN, __FILE__, __LINE__,
+                                               "Failed to realloc() memory : %s",
+                                               strerror(errno));
+                                    exit(INCORRECT);
+                                 }
                               }
                            }
                         }
@@ -234,10 +291,13 @@ main(int argc, char *argv[])
                            if ((apl = realloc(apl,
                                               (no_of_process * sizeof(struct aldad_proc_list)))) == NULL)
                            {
-                              system_log(FATAL_SIGN, __FILE__, __LINE__,
-                                         "Failed to realloc() memory : %s",
-                                         strerror(errno));
-                              exit(INCORRECT);
+                              if (errno != 0)
+                              {
+                                 system_log(FATAL_SIGN, __FILE__, __LINE__,
+                                            "Failed to realloc() memory : %s",
+                                            strerror(errno));
+                                 exit(INCORRECT);
+                              }
                            }
                         }
                      }
@@ -270,7 +330,11 @@ main(int argc, char *argv[])
 
 /*++++++++++++++++++++++++++++ make_process() +++++++++++++++++++++++++++*/
 static pid_t
+#ifdef WITH_AFD_MON
+make_process(char *parameters, int remote_log_data)
+#else
 make_process(char *parameters)
+#endif
 {
    pid_t proc_id;
 
@@ -278,8 +342,7 @@ make_process(char *parameters)
    {
       case -1: /* Could not generate process. */
          system_log(FATAL_SIGN, __FILE__, __LINE__,
-                    "Could not create a new process : %s",
-                    strerror(errno));
+                    "Could not create a new process : %s", strerror(errno));
          exit(INCORRECT);
 
       case  0: /* Child process. */
@@ -289,7 +352,7 @@ make_process(char *parameters)
             char *cmd;
 
             work_dir_length = strlen(p_work_dir);
-            length = 5 + 3 + work_dir_length + 1 + 3 + strlen(parameters) + 1;
+            length = 5 + 3 + work_dir_length + 1 + 6 + strlen(parameters) + 1;
             if ((cmd = malloc(length)) == NULL)
             {
                system_log(FATAL_SIGN, __FILE__, __LINE__,
@@ -310,7 +373,23 @@ make_process(char *parameters)
             cmd[9 + work_dir_length] = '-';
             cmd[10 + work_dir_length] = 'C';
             cmd[11 + work_dir_length] = ' ';
-            (void)strcpy(&cmd[12 + work_dir_length], parameters);
+#ifdef WITH_AFD_MON
+            if (remote_log_data == YES)
+            {
+               cmd[12 + work_dir_length] = '-';
+               cmd[13 + work_dir_length] = 'r';
+               cmd[14 + work_dir_length] = ' ';
+            }
+            else
+            {
+#endif
+               cmd[12 + work_dir_length] = '-';
+               cmd[13 + work_dir_length] = 'l';
+               cmd[14 + work_dir_length] = ' ';
+#ifdef WITH_AFD_MON
+            }
+#endif
+            (void)strcpy(&cmd[15 + work_dir_length], parameters);
             system_log(DEBUG_SIGN, NULL, 0, "aldad: %s", cmd);
             (void)execl("/bin/sh", "sh", "-c", cmd, (char *)0);
          }

@@ -1,7 +1,7 @@
 /*
  *  eval_dir_options.c - Part of AFD, an automatic file distribution
  *                       program.
- *  Copyright (c) 2000 - 2021 Holger Kiehl <Holger.Kiehl@dwd.de>
+ *  Copyright (c) 2000 - 2024 Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -51,6 +51,7 @@ DESCR__S_M3
  **        do not get dir list
  **        do not remove
  **        url creates file name
+ **        url with index file name
  **        store retrieve list [once]
  **        priority <value>                      [DEFAULT 9]
  **        force reread [local|remote]
@@ -108,6 +109,8 @@ DESCR__S_M3
  **                      this name.
  **   11.05.2017 H.Kiehl Added parameter cmd_fp, so we can show errors
  **                      and warnings directly when udc is called.
+ **   29.10.2022 H.Kiehl Added "url with index file name" option.
+ **   13.01.2024 H.Kiehl Extended 'store retrieve list' with 'once not exact'.
  **
  */
 DESCR__E_M3
@@ -116,8 +119,6 @@ DESCR__E_M3
 #include <stdlib.h>               /* atoi(), malloc(), free(), strtoul() */
 #include <string.h>               /* strcmp(), strncmp(), strerror()     */
 #include <ctype.h>                /* isdigit()                           */
-#include <sys/types.h>
-#include <sys/stat.h>             /* fstat()                             */
 #include <unistd.h>               /* read(), close(), setuid()           */
 #ifdef HAVE_FCNTL_H
 # include <fcntl.h>               /* O_RDONLY, etc                       */
@@ -185,6 +186,7 @@ extern struct dir_data *dd;
 #define URL_CREATES_FILE_NAME_FLAG       64
 #define NO_DELIMITER_FLAG                128
 #define KEEP_PATH_FLAG                   256
+#define URL_WITH_INDEX_FILE_NAME_FLAG    512
 
 
 /*########################## eval_dir_options() #########################*/
@@ -246,6 +248,7 @@ eval_dir_options(int dir_pos, char type, char *dir_options, FILE *cmd_fp)
    dd[dir_pos].accept_dot_files = NO;
    dd[dir_pos].do_not_get_dir_list = NO;
    dd[dir_pos].url_creates_file_name = NO;
+   dd[dir_pos].url_with_index_file_name = NO;
    dd[dir_pos].create_source_dir = NO;
    dd[dir_pos].max_errors = 10;
    dd[dir_pos].info_time = default_info_time;
@@ -350,7 +353,7 @@ eval_dir_options(int dir_pos, char type, char *dir_options, FILE *cmd_fp)
               {
                  number[length] = '\0';
                  dd[dir_pos].inotify_flag = (unsigned int)atoi(number);
-                 if (dd[dir_pos].inotify_flag > (INOTIFY_RENAME_FLAG | INOTIFY_CLOSE_FLAG | INOTIFY_CREATE_FLAG | INOTIFY_DELETE_FLAG))
+                 if (dd[dir_pos].inotify_flag > (INOTIFY_RENAME_FLAG | INOTIFY_CLOSE_FLAG | INOTIFY_CREATE_FLAG | INOTIFY_DELETE_FLAG | INOTIFY_ATTRIB))
                  {
                     update_db_log(WARN_SIGN, __FILE__, __LINE__, cmd_fp, NULL,
                                   "Incorrect parameter %u for directory option `%s' for directory `%s'. Resetting to %u.",
@@ -706,6 +709,7 @@ eval_dir_options(int dir_pos, char type, char *dir_options, FILE *cmd_fp)
               {
                  ptr++;
               }
+              /* once */
               if ((*ptr == 'o') && (*(ptr + 1) == 'n') &&
                   (*(ptr + 2) == 'c') && (*(ptr + 3) == 'e') &&
                   ((*(ptr + 4) == '\n') || (*(ptr + 4) == '\0')))
@@ -713,6 +717,22 @@ eval_dir_options(int dir_pos, char type, char *dir_options, FILE *cmd_fp)
                  dd[dir_pos].stupid_mode = GET_ONCE_ONLY;
                  ptr += 4;
               }
+                   /* once not exact */
+              else if ((*ptr == 'o') && (*(ptr + 1) == 'n') &&
+                       (*(ptr + 2) == 'c') && (*(ptr + 3) == 'e') &&
+                       ((*(ptr + 4) == ' ') || (*(ptr + 4) == '\t')) &&
+                       (*(ptr + 5) == 'n') && (*(ptr + 6) == 'o') &&
+                       (*(ptr + 7) == 't') &&
+                       ((*(ptr + 8) == ' ') || (*(ptr + 8) == '\t')) &&
+                       (*(ptr + 9) == 'e') && (*(ptr + 10) == 'x') &&
+                       (*(ptr + 11) == 'a') && (*(ptr + 12) == 'c') &&
+                       (*(ptr + 13) == 't') &&
+                       ((*(ptr + 14) == '\n') || (*(ptr + 14) == '\0')))
+                   {
+                      dd[dir_pos].stupid_mode = GET_ONCE_NOT_EXACT;
+                      ptr += 4;
+                   }
+                   /* append */
               else if ((*ptr == 'a') && (*(ptr + 1) == 'p') &&
                        (*(ptr + 2) == 'p') && (*(ptr + 3) == 'e') &&
                        (*(ptr + 4) == 'n') && (*(ptr + 5) == 'd') &&
@@ -977,6 +997,17 @@ eval_dir_options(int dir_pos, char type, char *dir_options, FILE *cmd_fp)
                  ptr++;
               }
               dd[dir_pos].url_creates_file_name = YES;
+           }
+      else if (((used2 & URL_WITH_INDEX_FILE_NAME_FLAG) == 0) &&
+               (strncmp(ptr, URL_WITH_INDEX_FILE_NAME_ID, URL_WITH_INDEX_FILE_NAME_ID_LENGTH) == 0))
+           {
+              used2 |= URL_WITH_INDEX_FILE_NAME_FLAG;
+              ptr += URL_WITH_INDEX_FILE_NAME_ID_LENGTH;
+              while ((*ptr != '\n') && (*ptr != '\0'))
+              {
+                 ptr++;
+              }
+              dd[dir_pos].url_with_index_file_name = YES;
            }
       else if (((used2 & NO_DELIMITER_FLAG) == 0) &&
                (strncmp(ptr, NO_DELIMITER_ID, NO_DELIMITER_ID_LENGTH) == 0))
@@ -1265,6 +1296,16 @@ eval_dir_options(int dir_pos, char type, char *dir_options, FILE *cmd_fp)
               if ((length > 0) && (length != MAX_TIMEZONE_LENGTH))
               {
                  dd[dir_pos].timezone[length] = '\0';
+#ifdef TZDIR
+                 if (timezone_name_check(dd[dir_pos].timezone) == INCORRECT)
+                 {
+                    update_db_log(WARN_SIGN, __FILE__, __LINE__, cmd_fp, NULL,
+                                  "Unable to find specified timezone (%s) in %s",
+                                  dd[dir_pos].timezone, TZDIR);
+                    problems_found++;
+                    dd[dir_pos].timezone[0] = '\0';
+                 }
+#endif
               }
               else
               {

@@ -1,6 +1,6 @@
 /*
  *  afddefs.h - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 1996 - 2022 Deutscher Wetterdienst (DWD),
+ *  Copyright (c) 1996 - 2024 Deutscher Wetterdienst (DWD),
  *                            Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
@@ -27,8 +27,6 @@
 #define DESCR__S_M3             /* Start for Subroutines Man Page.  */
 #define DESCR__E_M3             /* End for Subroutines Man Page.    */
 
-/* #define NEW_FRA */
-/* #define NEW_FSA */
 /* #define NEW_PWB */    /* Nothing new yet! */
 
 #define WITH_TIMEZONE 1
@@ -88,6 +86,18 @@
 # include <sys/resource.h>
 #endif
 #include <float.h>                    /* DBL_MANT_DIG, DBL_MIN_EXP       */
+#ifdef WITH_SSL
+# ifdef HAVE_TLS_CLIENT_METHOD
+#  define afd_encrypt_client_method TLS_client_method
+# else
+#  define afd_encrypt_client_method SSLv23_client_method
+# endif
+# ifdef HAVE_TLS_SERVER_METHOD
+#  define afd_encrypt_server_method TLS_server_method
+# else
+#  define afd_encrypt_server_method SSLv23_server_method
+# endif
+#endif
 
 #if defined(__GNUC__)
 # define GCC_VERSION (__GNUC__ * 10000 + __GNUC_MINOR__ * 100 + __GNUC_PATCHLEVEL__)
@@ -225,7 +235,7 @@ typedef unsigned long       u_long_64;
  * The default number of parallel jobs per host.
  */
 #ifndef DEFAULT_NO_PARALLEL_JOBS
-# define DEFAULT_NO_PARALLEL_JOBS 2
+# define DEFAULT_NO_PARALLEL_JOBS 3
 #endif
 /*
  * The maximum length of the host name (alias) that is displayed by
@@ -250,11 +260,7 @@ typedef unsigned long       u_long_64;
  *           README.configure to correct the values there too.
  */
 #ifndef MAX_REAL_HOSTNAME_LENGTH
-# if defined NEW_FSA && defined NEW_FRA
-#  define MAX_REAL_HOSTNAME_LENGTH 70
-# else
-#  define MAX_REAL_HOSTNAME_LENGTH 40
-# endif
+# define MAX_REAL_HOSTNAME_LENGTH 70
 #endif
 
 /* Define the names of the program's. */
@@ -363,6 +369,7 @@ typedef unsigned long       u_long_64;
 #define AFD_CTRL                   "afd_ctrl"
 #define AFD_CTRL_LENGTH            (sizeof(AFD_CTRL) - 1)
 #define AFDD                       "afdd"
+#define AFDDS                      "afdds"
 #ifdef _WITH_ATPD_SUPPORT
 # define ATPD                      "atpd"
 #endif
@@ -379,6 +386,7 @@ typedef unsigned long       u_long_64;
 #define MON_CTRL                   "mon_ctrl"
 #define MON_INFO                   "mon_info"
 #define AFD_CMD                    "afdcmd"
+#define AFDCFG                     "afdcfg"
 #define VIEW_DC                    "view_dc"
 #define GET_DC_DATA                "get_dc_data"
 #define GET_DC_DATA_LENGTH         (sizeof(GET_DC_DATA) - 1)
@@ -490,8 +498,26 @@ typedef unsigned long       u_long_64;
 #define AW_LOCK_ID                 4    /* Archive watch                */
 #define AS_LOCK_ID                 5    /* AFD statistics               */
 #define AFDD_LOCK_ID               6    /* AFD TCP Daemon               */
+#define AFDDS_LOCK_ID              7    /* AFD TLS TCP Daemon           */
 #ifdef _WITH_ATPD_SUPPORT
-# define ATPD_LOCK_ID              7    /* AFD Transfer Protocol Daemon */
+# define ATPD_LOCK_ID              8    /* AFD Transfer Protocol Daemon */
+# ifdef _WITH_WMOD_SUPPORT
+#  define WMOD_LOCK_ID             9    /* WMO protocol Daemon          */
+#  ifdef _WITH_DE_MAIL_SUPPORT
+#   define DEMCD_LOCK_ID           10   /* De Mail Confirmation Daemon  */
+#   define NO_OF_LOCK_PROC         11
+#  else
+#   define NO_OF_LOCK_PROC         10
+#  endif
+# else
+#  ifdef _WITH_DE_MAIL_SUPPORT
+#   define DEMCD_LOCK_ID           9    /* De Mail Confirmation Daemon  */
+#   define NO_OF_LOCK_PROC         10
+#  else
+#   define NO_OF_LOCK_PROC         9
+#  endif
+# endif
+#else
 # ifdef _WITH_WMOD_SUPPORT
 #  define WMOD_LOCK_ID             8    /* WMO protocol Daemon          */
 #  ifdef _WITH_DE_MAIL_SUPPORT
@@ -506,23 +532,6 @@ typedef unsigned long       u_long_64;
 #   define NO_OF_LOCK_PROC         9
 #  else
 #   define NO_OF_LOCK_PROC         8
-#  endif
-# endif
-#else
-# ifdef _WITH_WMOD_SUPPORT
-#  define WMOD_LOCK_ID             7    /* WMO protocol Daemon          */
-#  ifdef _WITH_DE_MAIL_SUPPORT
-#   define DEMCD_LOCK_ID           8    /* De Mail Confirmation Daemon  */
-#   define NO_OF_LOCK_PROC         9
-#  else
-#   define NO_OF_LOCK_PROC         8
-#  endif
-# else
-#  ifdef _WITH_DE_MAIL_SUPPORT
-#   define DEMCD_LOCK_ID           7    /* De Mail Confirmation Daemon  */
-#   define NO_OF_LOCK_PROC         8
-#  else
-#   define NO_OF_LOCK_PROC         7
 #  endif
 # endif
 #endif
@@ -540,11 +549,7 @@ typedef unsigned long       u_long_64;
 #define WORK_DIR_ID                "-w"
 #define WORK_DIR_ID_LENGTH         (sizeof(WORK_DIR_ID) - 1)
 
-#ifdef FTX
-# define WAIT_LOOPS 600 /* 60 seconds */
-#else
-# define WAIT_LOOPS 300 /* 30 seconds */
-#endif
+#define WAIT_LOOPS                 (MAX_SHUTDOWN_TIME + (MAX_SHUTDOWN_TIME / 2))
 
 /* Definitions when AFD file directory is running full. */
 #define STOP_AMG_THRESHOLD         20
@@ -589,21 +594,22 @@ typedef unsigned long       u_long_64;
 #define STAT_NO                    8
 #define DC_NO                      9
 #define AFDD_NO                    10
+#define AFDDS_NO                   11
 #ifdef _WITH_ATPD_SUPPORT
 # define ATPD_OFFSET               1
-# define ATPD_NO                   (AFDD_NO + ATPD_OFFSET)
+# define ATPD_NO                   (AFDDS_NO + ATPD_OFFSET)
 #else
 # define ATPD_OFFSET               0
 #endif
 #ifdef _WITH_WMOD_SUPPORT
 # define WMOD_OFFSET               1
-# define WMOD_NO                   (AFDD_NO + ATPD_OFFSET + WMOD_OFFSET)
+# define WMOD_NO                   (AFDDS_NO + ATPD_OFFSET + WMOD_OFFSET)
 #else
 # define WMOD_OFFSET               0
 #endif
 #ifdef _WITH_DE_MAIL_SUPPORT
 # define DEMCD_OFFSET              1
-# define DEMCD_NO                  (AFDD_NO + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET)
+# define DEMCD_NO                  (AFDDS_NO + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET)
 #else
 # define DEMCD_OFFSET              0
 #endif
@@ -611,59 +617,59 @@ typedef unsigned long       u_long_64;
 # define MAPPER_OFFSET             0
 #else
 # define MAPPER_OFFSET             1
-# define MAPPER_NO                 (AFDD_NO + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET)
+# define MAPPER_NO                 (AFDDS_NO + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET)
 #endif
 #ifdef _INPUT_LOG
 # define INPUT_OFFSET              1
-# define INPUT_LOG_NO              (AFDD_NO + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET + INPUT_OFFSET)
+# define INPUT_LOG_NO              (AFDDS_NO + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET + INPUT_OFFSET)
 #else
 # define INPUT_OFFSET              0
 #endif
 #ifdef _OUTPUT_LOG
 # define OUTPUT_OFFSET             1
-# define OUTPUT_LOG_NO             (AFDD_NO + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET + INPUT_OFFSET + OUTPUT_OFFSET)
+# define OUTPUT_LOG_NO             (AFDDS_NO + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET + INPUT_OFFSET + OUTPUT_OFFSET)
 #else
 # define OUTPUT_OFFSET             0
 #endif
 #ifdef _CONFIRMATION_LOG
 # define CONFIRMATION_OFFSET       1
-# define CONFIRMATION_LOG_NO       (AFDD_NO + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET + INPUT_OFFSET + OUTPUT_OFFSET + CONFIRMATION_OFFSET)
+# define CONFIRMATION_LOG_NO       (AFDDS_NO + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET + INPUT_OFFSET + OUTPUT_OFFSET + CONFIRMATION_OFFSET)
 #else
 # define CONFIRMATION_OFFSET       0
 #endif
 #ifdef _DELETE_LOG
 # define DELETE_OFFSET             1
-# define DELETE_LOG_NO             (AFDD_NO + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET + INPUT_OFFSET + OUTPUT_OFFSET + CONFIRMATION_OFFSET + DELETE_OFFSET)
+# define DELETE_LOG_NO             (AFDDS_NO + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET + INPUT_OFFSET + OUTPUT_OFFSET + CONFIRMATION_OFFSET + DELETE_OFFSET)
 #else
 # define DELETE_OFFSET             0
 #endif
 #ifdef _PRODUCTION_LOG
 # define PRODUCTION_OFFSET         1
-# define PRODUCTION_LOG_NO         (AFDD_NO + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET + INPUT_OFFSET + OUTPUT_OFFSET + CONFIRMATION_OFFSET + DELETE_OFFSET + PRODUCTION_OFFSET)
+# define PRODUCTION_LOG_NO         (AFDDS_NO + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET + INPUT_OFFSET + OUTPUT_OFFSET + CONFIRMATION_OFFSET + DELETE_OFFSET + PRODUCTION_OFFSET)
 #else
 # define PRODUCTION_OFFSET         0
 #endif
 #ifdef _DISTRIBUTION_LOG
 # define DISTRIBUTION_OFFSET       1
-# define DISTRIBUTION_LOG_NO       (AFDD_NO + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET + INPUT_OFFSET + OUTPUT_OFFSET + CONFIRMATION_OFFSET + DELETE_OFFSET + PRODUCTION_OFFSET + DISTRIBUTION_OFFSET)
+# define DISTRIBUTION_LOG_NO       (AFDDS_NO + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET + INPUT_OFFSET + OUTPUT_OFFSET + CONFIRMATION_OFFSET + DELETE_OFFSET + PRODUCTION_OFFSET + DISTRIBUTION_OFFSET)
 #else
 # define DISTRIBUTION_OFFSET       0
 #endif
 #ifdef _TRANSFER_RATE_LOG
 # define TRANSFER_RATE_OFFSET      1
-# define TRANSFER_RATE_LOG_NO      (AFDD_NO + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET + INPUT_OFFSET + OUTPUT_OFFSET + CONFIRMATION_OFFSET + DELETE_OFFSET + PRODUCTION_OFFSET + DISTRIBUTION_OFFSET + TRANSFER_RATE_OFFSET)
+# define TRANSFER_RATE_LOG_NO      (AFDDS_NO + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET + INPUT_OFFSET + OUTPUT_OFFSET + CONFIRMATION_OFFSET + DELETE_OFFSET + PRODUCTION_OFFSET + DISTRIBUTION_OFFSET + TRANSFER_RATE_OFFSET)
 #else
 # define TRANSFER_RATE_OFFSET      0
 #endif
-#define MAINTAINER_LOG_NO          (AFDD_NO + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET + INPUT_OFFSET + OUTPUT_OFFSET + CONFIRMATION_OFFSET + DELETE_OFFSET + PRODUCTION_OFFSET + DISTRIBUTION_OFFSET + TRANSFER_RATE_OFFSET + 1)
-#define AFD_WORKER_NO              (AFDD_NO + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET + INPUT_OFFSET + OUTPUT_OFFSET + CONFIRMATION_OFFSET + DELETE_OFFSET + PRODUCTION_OFFSET + DISTRIBUTION_OFFSET + TRANSFER_RATE_OFFSET + 1 + 1)
+#define MAINTAINER_LOG_NO          (AFDDS_NO + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET + INPUT_OFFSET + OUTPUT_OFFSET + CONFIRMATION_OFFSET + DELETE_OFFSET + PRODUCTION_OFFSET + DISTRIBUTION_OFFSET + TRANSFER_RATE_OFFSET + 1)
+#define AFD_WORKER_NO              (AFDDS_NO + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET + INPUT_OFFSET + OUTPUT_OFFSET + CONFIRMATION_OFFSET + DELETE_OFFSET + PRODUCTION_OFFSET + DISTRIBUTION_OFFSET + TRANSFER_RATE_OFFSET + 1 + 1)
 #if defined (_INPUT_LOG) || defined (_OUTPUT_LOG) || defined (_CONFIRMATION_LOG) || defined (_DELETE_LOG) || defined (_PRODUCTION_LOG) || defined (_DISTRIBUTION_LOG)
 # define ALDAD_OFFSET              1
-# define ALDAD_NO                  (AFDD_NO + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET + INPUT_OFFSET + OUTPUT_OFFSET + CONFIRMATION_OFFSET + DELETE_OFFSET + PRODUCTION_OFFSET + DISTRIBUTION_OFFSET + TRANSFER_RATE_OFFSET + 1 + 1 + ALDAD_OFFSET)
+# define ALDAD_NO                  (AFDDS_NO + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET + INPUT_OFFSET + OUTPUT_OFFSET + CONFIRMATION_OFFSET + DELETE_OFFSET + PRODUCTION_OFFSET + DISTRIBUTION_OFFSET + TRANSFER_RATE_OFFSET + 1 + 1 + ALDAD_OFFSET)
 #else
 # define ALDAD_OFFSET              0
 #endif
-#define NO_OF_PROCESS              (AFDD_NO + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET + INPUT_OFFSET + OUTPUT_OFFSET + CONFIRMATION_OFFSET + DELETE_OFFSET + PRODUCTION_OFFSET + DISTRIBUTION_OFFSET + TRANSFER_RATE_OFFSET + 1 + 1 + ALDAD_OFFSET + 1)
+#define NO_OF_PROCESS              (AFDDS_NO + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET + INPUT_OFFSET + OUTPUT_OFFSET + CONFIRMATION_OFFSET + DELETE_OFFSET + PRODUCTION_OFFSET + DISTRIBUTION_OFFSET + TRANSFER_RATE_OFFSET + 1 + 1 + ALDAD_OFFSET + 1)
 #define SHOW_OLOG_NO               30
 
 #define NA                         -1
@@ -701,6 +707,7 @@ typedef unsigned long       u_long_64;
 #define FILE_IS_DIR                -2     /* Used by remove_dir().        */
 #define GET_ONCE_ONLY              2
 #define APPEND_ONLY                3
+#define GET_ONCE_NOT_EXACT         4
 #define DATA_MOVED                 1
 #define DATA_COPIED                3
 #define NORMAL_IDENTIFIER          0
@@ -878,7 +885,9 @@ typedef unsigned long       u_long_64;
 /* Different URL auth= options. */
 #define AUTH_NONE                  0
 #define AUTH_BASIC                 1
-#define AUTH_AWS4_HMAC_SHA256      2
+#define AUTH_DIGEST                2
+#define AUTH_AWS4_HMAC_SHA256      4
+#define AUTH_AWS_NO_SIGN_REQUEST   8
 
 /* Different URL service= options. */
 #define SERVICE_NONE               0
@@ -895,9 +904,6 @@ typedef unsigned long       u_long_64;
 # define UNKNOWN_KEY_TYPE          16
 # define NOT_A_FINGERPRINT         32
 # define ONLY_FINGERPRINT_KNOWN    64
-# define MAX_URL_ERROR_MSG         (14 + 35 + 29 + 11 + 18 + 21 + 48 + 34 + 34 + 37 + 11 + 47 + 11 + 34 + 30 + 11 + 23 + 42 + 11 + 30 + 25 + 37 + 11 + 29 + 25 + 43 + 52 + 11 + 17 + 1)
-#else
-# define MAX_URL_ERROR_MSG         (14 + 35 + 29 + 11 + 34 + 34 + 37 + 11 + 47 + 11 + 34 + 30 + 11 + 23 + 42 + 11 + 30 + 25 + 37 + 11 + 29 + 25 + 43 + 52 + 11 + 17 + 1)
 #endif
 #define PASSWORD_TO_LONG           128
 #define HOSTNAME_TO_LONG           256
@@ -920,6 +926,13 @@ typedef unsigned long       u_long_64;
 #define REGION_NAME_TO_LONG        33554432
 #define PARAMETER_MISSING          67108864
 #define URL_UNKNOWN_VALUE          134217728
+#ifdef WITH_SSH_FINGERPRINT
+                           /*    USER_NAME_TO_LONG     UNKNOWN_SMTP_AUTH UNKNOWN_KEY_TYPE NOT_A_FINGERPRINT ONLY_FINGERPRINT_KNOWN PASSWORD_TO_LONG      HOSTNAME_TO_LONG      PORT_TO_LONG          TIME_MODIFIER_TO_LONG NO_TIME_MODIFIER_SPECIFIED RECIPIENT_TO_LONG     UNKNOWN_TRANSFER_TYPE TARGET_DIR_CAN_CHANGE PROTOCOL_VERSION_TO_LONG NO_PROTOCOL_VERSION NO_PORT_SPECIFIED SERVER_NAME_TO_LONG   EXEC_CMD_ERROR EXEC_NO_RETURN EXEC_NOT_TERMINATED EXEC_CMD_TO_LONG      REGION_NAME_TO_LONG   PARAMETER_MISSING URL_UNKNOWN_VALUE BUFFER_TO_SHORT */
+# define MAX_URL_ERROR_MSG (14 + 35 + MAX_INT_LENGTH + 29 +              18 +             21 +              48 +                   34 + MAX_INT_LENGTH + 34 + MAX_INT_LENGTH + 37 + MAX_INT_LENGTH + 47 + MAX_INT_LENGTH + 34 +                       35 + MAX_INT_LENGTH + 23 +                  28 +                  42 + MAX_INT_LENGTH +    30 +                25 +              37 + MAX_INT_LENGTH + 29 +           25 +           43 +                52 + MAX_INT_LENGTH + 37 + MAX_INT_LENGTH + 19 +              15 +              17 +            1)
+#else
+                           /*    USER_NAME_TO_LONG     UNKNOWN_SMTP_AUTH                                                           PASSWORD_TO_LONG      HOSTNAME_TO_LONG      PORT_TO_LONG          TIME_MODIFIER_TO_LONG NO_TIME_MODIFIER_SPECIFIED RECIPIENT_TO_LONG     UNKNOWN_TRANSFER_TYPE TARGET_DIR_CAN_CHANGE PROTOCOL_VERSION_TO_LONG NO_PROTOCOL_VERSION NO_PORT_SPECIFIED SERVER_NAME_TO_LONG   EXEC_CMD_ERROR EXEC_NO_RETURN EXEC_NOT_TERMINATED EXEC_CMD_TO_LONG      REGION_NAME_TO_LONG   PARAMETER_MISSING URL_UNKNOWN_VALUE BUFFER_TO_SHORT */
+# define MAX_URL_ERROR_MSG (14 + 35 + MAX_INT_LENGTH + 29 +                                                                        34 + MAX_INT_LENGTH + 34 + MAX_INT_LENGTH + 37 + MAX_INT_LENGTH + 47 + MAX_INT_LENGTH + 34 +                       35 + MAX_INT_LENGTH + 23 +                  28 +                  42 + MAX_INT_LENGTH +    30 +                25 +              37 + MAX_INT_LENGTH + 29 +           25 +           43 +                52 + MAX_INT_LENGTH + 37 + MAX_INT_LENGTH + 19 +              15 +              17 +            1)
+#endif
 
 /* When looking at difference in two URL's, flags for which parts differ. */
 #define URL_SCHEME_DIFS            1
@@ -984,6 +997,7 @@ typedef unsigned long       u_long_64;
 #define TLS_LEGACY_RENEGOTIATION   2147483648U       /* 32 */
 
 /* Definitions for protocol_options2 in FSA. */
+#define FTP_SEND_UTF8_ON           1                 /*  1 */
 
 /* Definitions for protocol_options in sf_xxx + gf_xxx functions. */
 #define PROT_OPT_NO_EXPECT                 1
@@ -1105,6 +1119,8 @@ typedef unsigned long       u_long_64;
 #define DO_NOT_GET_DIR_LIST_ID_LENGTH    (sizeof(DO_NOT_GET_DIR_LIST_ID) - 1)
 #define URL_CREATES_FILE_NAME_ID         "url creates file name"
 #define URL_CREATES_FILE_NAME_ID_LENGTH  (sizeof(URL_CREATES_FILE_NAME_ID) -1)
+#define URL_WITH_INDEX_FILE_NAME_ID      "url with index file name"
+#define URL_WITH_INDEX_FILE_NAME_ID_LENGTH (sizeof(URL_WITH_INDEX_FILE_NAME_ID) -1)
 #define DIR_WARN_TIME_ID                 "warn time"
 #define DIR_WARN_TIME_ID_LENGTH          (sizeof(DIR_WARN_TIME_ID) - 1)
 #define DIR_INFO_TIME_ID                 "info time"
@@ -1159,6 +1175,10 @@ typedef unsigned long       u_long_64;
 #define ULOCK_ID_LENGTH                  (sizeof(ULOCK_ID) - 1)
 #define LOCK_POSTFIX_ID                  "lockp"
 #define LOCK_POSTFIX_ID_LENGTH           (sizeof(LOCK_POSTFIX_ID) - 1)
+#define REMOTE_HARDLINK_ID               "hardlink"
+#define REMOTE_HARDLINK_ID_LENGTH        (sizeof(REMOTE_HARDLINK_ID) - 1)
+#define REMOTE_SYMLINK_ID                "symlink"
+#define REMOTE_SYMLINK_ID_LENGTH         (sizeof(REMOTE_SYMLINK_ID) - 1)
 #define RESTART_FILE_ID                  "restart"
 #define RESTART_FILE_ID_LENGTH           (sizeof(RESTART_FILE_ID) - 1)
 #define TRANS_RENAME_ID                  "trans_rename"
@@ -1243,6 +1263,14 @@ typedef unsigned long       u_long_64;
 #define MATCH_REMOTE_SIZE_ID_LENGTH      (sizeof(MATCH_REMOTE_SIZE_ID) - 1)
 #define SILENT_NOT_LOCKED_FILE_ID        "silent not locked"
 #define SILENT_NOT_LOCKED_FILE_ID_LENGTH (sizeof(SILENT_NOT_LOCKED_FILE_ID) - 1)
+#define AGEING_ID                        "ageing"
+#define AGEING_ID_LENGTH                 (sizeof(AGEING_ID) - 1)
+
+/* Definitions for ageing. */
+#define DEFAULT_AGEING                   5
+#define MIN_AGEING_VALUE                 0
+#define MAX_AGEING_VALUE                 9
+#define AGEING_TABLE_LENGTH              10
 
 /* Default definitions. */
 #define AFD_CONFIG_FILE                  "/AFD_CONFIG"
@@ -1296,6 +1324,7 @@ typedef unsigned long       u_long_64;
 
 /* Definitions to be read from the AFD_CONFIG file. */
 #define AFD_TCP_PORT_DEF                 "AFD_TCP_PORT"
+#define AFD_TLS_PORT_DEF                 "AFD_TLS_PORT"
 #define AFD_TCP_LOGS_DEF                 "AFD_TCP_LOGS"
 #ifdef _WITH_ATPD_SUPPORT
 # define ATPD_TCP_PORT_DEF               "ATPD_TCP_PORT"
@@ -1303,9 +1332,11 @@ typedef unsigned long       u_long_64;
 #define DEFAULT_PRINTER_CMD_DEF          "DEFAULT_PRINTER_CMD"
 #define DEFAULT_PRINTER_NAME_DEF         "DEFAULT_PRINTER_NAME"
 #define DEFAULT_AGE_LIMIT_DEF            "DEFAULT_AGE_LIMIT"
+#define DEFAULT_AGEING_DEF               "DEFAULT_AGEING"
 #define MAX_CONNECTIONS_DEF              "MAX_CONNECTIONS"
 #define MAX_COPIED_FILES_DEF             "MAX_COPIED_FILES"
 #define MAX_COPIED_FILE_SIZE_DEF         "MAX_COPIED_FILE_SIZE"
+#define MAX_SHUTDOWN_TIME_DEF            "MAX_SHUTDOWN_TIME"
 #define ONE_DIR_COPY_TIMEOUT_DEF         "ONE_DIR_COPY_TIMEOUT"
 #define FULL_SCAN_TIMEOUT_DEF            "FULL_SCAN_TIMEOUT"
 #define REMOTE_FILE_CHECK_INTERVAL_DEF   "REMOTE_FILE_CHECK_INTERVAL"
@@ -1364,6 +1395,7 @@ typedef unsigned long       u_long_64;
 #define RENAME_RULE_NAME_DEF             "RENAME_RULE_NAME"
 #ifdef HAVE_SETPRIORITY
 # define AFDD_PRIORITY_DEF               "AFDD_PRIORITY"
+# define AFDDS_PRIORITY_DEF              "AFDDS_PRIORITY"
 # ifdef _WITH_ATPD_SUPPORT
 #  define ATPD_PRIORITY_DEF              "ATPD_PRIORITY"
 # endif
@@ -1468,6 +1500,9 @@ typedef unsigned long       u_long_64;
                                             /* waits for its children to    */
                                             /* return before they get       */
                                             /* eliminated.                  */
+#define MIN_SHUTDOWN_TIME            50     /* Ths time is subtracted from  */
+                                            /* MAX_SHUTDOWN_TIME. So this   */
+                                            /* value may not be higher.     */
 #define MAX_RENAME_RULE_FILES        20     /* Maximum number of rename rule*/
                                             /* files that may be configured */
                                             /* in AFD_CONFIG.               */
@@ -1569,9 +1604,9 @@ typedef unsigned long       u_long_64;
                                             /* event reason.                */
 #ifndef MAX_NO_PARALLEL_JOBS
 # ifdef AFDBENCH_CONFIG
-#  define MAX_NO_PARALLEL_JOBS       10
+#  define MAX_NO_PARALLEL_JOBS       12
 # else
-#  define MAX_NO_PARALLEL_JOBS       5      /* Maximum number of parallel   */
+#  define MAX_NO_PARALLEL_JOBS       9      /* Maximum number of parallel   */
                                             /* jobs per host alias.         */
 # endif
 #endif
@@ -1899,6 +1934,7 @@ typedef unsigned long       u_long_64;
 #define AFD_STATUS_FILE              "afd.status"
 #define AFD_STATUS_FILE_LENGTH       (sizeof(AFD_STATUS_FILE) - 1)
 #define AFD_STATUS_FILE_ALL          "/afd.status.*"
+#define AFDCFG_RECOVER               "/afdcfg.recover"
 #define NNN_FILE                     "/nnn"
 #define NNN_ASSEMBLE_FILE            "/nnn.assemble"
 #define NNN_FILE_ALL                 "/nnn.*"
@@ -2012,6 +2048,7 @@ typedef unsigned long       u_long_64;
 #define DEL_TIME_JOB_FIFO            "/del_time_job.fifo"
 #define MSG_FIFO                     "/msg.fifo"
 #define AFDD_LOG_FIFO                "/afdd_log.fifo"
+#define AFDDS_LOG_FIFO               "/afdds_log.fifo"
 #ifdef _WITH_DE_MAIL_SUPPORT
 # define DEMCD_FIFO                  "/demcd.fifo"
 # define DEMCD_FIFO_LENGTH           (sizeof(DEMCD_FIFO) - 1)
@@ -2098,8 +2135,8 @@ typedef unsigned long       u_long_64;
 # define INOTIFY_CLOSE             32768
 #endif
 #define ALL_DISABLED               65536
-/* #define ____no_used____            131072 */
 #ifdef WITH_INOTIFY
+# define INOTIFY_ATTRIB            131072
 # define INOTIFY_NEEDS_SCAN        262144
 # define INOTIFY_CREATE            524288
 #endif
@@ -2112,7 +2149,7 @@ typedef unsigned long       u_long_64;
 #define DIR_DISABLED_STATIC        16777216
 #define ONE_PROCESS_JUST_SCANNING  33554432
 #define URL_CREATES_FILE_NAME      67108864
-/* #define ____no_used____            134217728 */
+#define URL_WITH_INDEX_FILE_NAME   134217728
 #define NO_DELIMITER               268435456
 #define KEEP_PATH                  536870912
 
@@ -2125,6 +2162,7 @@ typedef unsigned long       u_long_64;
 # define INOTIFY_CLOSE_FLAG        2
 # define INOTIFY_CREATE_FLAG       4
 # define INOTIFY_DELETE_FLAG       8
+# define INOTIFY_ATTRIB_FLAG      16
 #endif
 
 
@@ -2469,17 +2507,13 @@ typedef unsigned long       u_long_64;
  *           |               | list.
  *-----------------------------------------------------------------------*/
 #define AFD_WORD_OFFSET               (SIZEOF_INT + 4 + SIZEOF_INT + 4)
-#define AFD_FEATURE_FLAG_OFFSET_START 5  /* From start */
-#define AFD_FEATURE_FLAG_OFFSET_END   11 /* From end   */
-#define AFD_START_ERROR_OFFSET_START  6  /* From start */
-#define AFD_START_ERROR_OFFSET_END    10 /* From end   */
+#define AFD_FEATURE_FLAG_OFFSET_START (SIZEOF_INT + 1)                      /* From start */
+#define AFD_FEATURE_FLAG_OFFSET_END   (SIZEOF_INT + SIZEOF_INT + 1 + 1 + 1) /* From end   */
+#define AFD_START_ERROR_OFFSET_START  (SIZEOF_INT + 1 + 1)                  /* From start */
+#define AFD_START_ERROR_OFFSET_END    (SIZEOF_INT + SIZEOF_INT + 1 + 1)     /* From end   */
 
 /* Structure that holds status of the file transfer for each host. */
-#ifdef NEW_FSA
-# define CURRENT_FSA_VERSION 4
-#else
-# define CURRENT_FSA_VERSION 3
-#endif
+#define CURRENT_FSA_VERSION 4
 struct status
        {
           pid_t         proc_id;            /* Process ID of transfering */
@@ -2493,13 +2527,11 @@ struct status
                                             /* etc), each of these is    */
                                             /* identified by this number.*/
 #endif
-#ifdef NEW_FSA
           unsigned char special_flag;       /*+-----+-------------------+*/
                                             /*| Bit |      Meaning      |*/
                                             /*+-----+-------------------+*/
                                             /*| 1-8 | Not used.         |*/
                                             /*+-----+-------------------+*/
-#endif
           char          connect_status;     /* The status of what        */
                                             /* sf_xxx() is doing.        */
           int           no_of_files;        /* Total number of all files */
@@ -2613,7 +2645,7 @@ struct filetransfer_status
                                             /*+-----+-------------------+*/
                                             /*| Bit |      Meaning      |*/
                                             /*+-----+-------------------+*/
-                                            /*|   32| Not used.         |*/
+                                            /*|   32| TLS_LEGACY_RENEGOTIATION|*/
                                             /*|   31| HTTP_BUCKETNAME_IN_PATH|*/
                                             /*|   30| NO_EXPECT         |*/
 #ifdef _WITH_EXTRA_CHECK
@@ -2648,15 +2680,14 @@ struct filetransfer_status
                                             /*|    2| SET_IDLE_TIME     |*/
                                             /*|    1| FTP_PASSIVE_MODE  |*/
                                             /*+-----+-------------------+*/
-#ifdef NEW_FSA
           unsigned int   protocol_options2; /* More special options for  */
                                             /* the protocols:            */
                                             /*+-----+-------------------+*/
                                             /*| Bit |      Meaning      |*/
                                             /*+-----+-------------------+*/
-                                            /*| 1-32| Not used.         |*/
+                                            /*| 2-32| Not used.         |*/
+                                            /*|    1| FTP_SEND_UTF8_ON  |*/
                                             /*+-----+-------------------+*/
-#endif
           unsigned int   socksnd_bufsize;   /* Socket buffer size for    */
                                             /* sending data. 0 is default*/
                                             /* which is the socket buffer*/
@@ -2782,11 +2813,6 @@ struct filetransfer_status
           unsigned int   file_counter_done; /* No. of files done so far. */
           u_off_t        bytes_send;        /* No. of bytes send so far. */
           unsigned int   connections;       /* No. of connections.       */
-#ifndef NEW_FSA /* Remove! */
-          unsigned int   mc_nack_counter;   /* Multicast Negative        */
-                                            /* Acknowledge Counter.      */
-                                            /* NOTE: Unused!             */
-#endif
           int            active_transfers;  /* No. of jobs transferring  */
                                             /* data.                     */
           int            allowed_transfers; /* Maximum no. of parallel   */
@@ -2798,15 +2824,6 @@ struct filetransfer_status
                                             /* second.                   */
           off_t          trl_per_process;   /* Transfer rate limit per   */
                                             /* active process.           */
-#ifndef NEW_FSA /* Remove! */
-          off_t          mc_ct_rate_limit;  /* Multicast current transfer*/
-                                            /* rate limit.               */
-                                            /* NOTE: Unused!             */
-          off_t          mc_ctrl_per_process;/* Multicast current        */
-                                            /* transfer rate limit per   */
-                                            /* process.                  */
-                                            /* NOTE: Unused!             */
-#endif
           struct status  job_status[MAX_NO_PARALLEL_JOBS];
        };
 
@@ -2931,11 +2948,7 @@ struct bd_time_entry
        };
 
 /* Structure holding all neccessary data for retrieving files. */
-#ifdef NEW_FRA
-# define CURRENT_FRA_VERSION     8
-#else
-# define CURRENT_FRA_VERSION     7
-#endif
+#define CURRENT_FRA_VERSION      8
 #define MAX_FRA_TIME_ENTRIES     12
 #define MAX_FRA_TIME_ENTRIES_STR "MAX_FRA_TIME_ENTRIES"
 #define MAX_WAIT_FOR_LENGTH      64
@@ -3046,7 +3059,6 @@ struct fileretrieve_status
                                             /* is being used.            */
           unsigned int  files_received;     /* No. of files received so  */
                                             /* far.                      */
-#ifdef NEW_FRA
           unsigned int  dir_options;
                                             /*+-----+-------------------+*/
                                             /*| Bit |      Meaning      |*/
@@ -3054,7 +3066,7 @@ struct fileretrieve_status
                                             /*|31-32| Not used.         |*/
                                             /*|   30| KEEP_PATH         |*/
                                             /*|   29| NO_DELIMITER      |*/
-                                            /*|   28| Not used.         |*/
+                                            /*|   28| URL_WITH_INDEX_FILE_NAME|*/
                                             /*|   27| URL_CREATES_FILE_NAME|*/
                                             /*|   26| ONE_PROCESS_JUST_SCANNING|*/
                                             /*|   25| Not used.         |*/
@@ -3063,7 +3075,9 @@ struct fileretrieve_status
                                             /*|   22| DO_NOT_PARALLELIZE|*/
                                             /*|   21| Not used.         |*/
                                             /*|   20| INOTIFY_CREATE    |*/
-                                            /*|17-19| Not used.         |*/
+                                            /*|   19| Not used.         |*/
+                                            /*|   18| INOTIFY_ATTRIB    |*/
+                                            /*|   17| Not used.         |*/
                                             /*|   16| INOTIFY_CLOSE     |*/
                                             /*|   15| INOTIFY_RENAME    |*/
                                             /*| 8-14| Not used.         |*/
@@ -3071,7 +3085,6 @@ struct fileretrieve_status
                                             /*|    6| ACCEPT_DOT_FILES  |*/
                                             /*|  1-5| Not used.         |*/
                                             /*+-----+-------------------+*/
-#endif
           unsigned int  dir_flag;           /* Flag for this directory   */
                                             /* informing about the       */
                                             /* following status:         */
@@ -3318,6 +3331,7 @@ struct afd_status
           signed char    archive_watch;
           signed char    afd_stat;        /* Statistic program            */
           signed char    afdd;
+          signed char    afdds;
 #ifdef _WITH_ATPD_SUPPORT
           signed char    atpd;            /* AFD Transfer Protocol Daemon.*/
 #endif
@@ -3643,7 +3657,9 @@ struct dir_options
 # define MAX_EXTRA_LS_DATA_LENGTH 90
 #endif
 
-#define RL_GOT_EXACT_SIZE_DATE    1
+#define RL_GOT_SIZE_DATE          1
+#define RL_GOT_EXACT_SIZE         2   /* Exact -> resolution in byte.    */
+#define RL_GOT_EXACT_DATE         4   /* Exact -> resolution in seconds. */
 struct retrieve_list
        {
           char          file_name[MAX_FILENAME_LENGTH];
@@ -3658,8 +3674,10 @@ struct retrieve_list
           unsigned char special_flag;    /*+-----+------------------------+*/
                                          /*| Bit |        Meaning         |*/
                                          /*+-----+------------------------+*/
-                                         /*| 2-32| Not used.              |*/
-                                         /*|    1| RL_GOT_EXACT_SIZE_DATE |*/
+                                         /*| 4-32| Not used.              |*/
+                                         /*|    3| RL_GOT_EXACT_DATE      |*/
+                                         /*|    2| RL_GOT_EXACT_SIZE      |*/
+                                         /*|    1| RL_GOT_SIZE_DATE       |*/
                                          /*+-----+------------------------+*/
           char          got_date;
           char          retrieved;       /* Has the file already been      */
@@ -4251,7 +4269,11 @@ extern int          assemble(char *, char *, int, char *, int, unsigned int,
                     check_typesize_data(int *, FILE *, int),
                     coe_open(char *, int, ...),
                     convert_grib2wmo(char *, off_t *, char *),
+#ifdef HAVE_STATX
+                    copy_file(char *, char *, struct statx *),
+#else
                     copy_file(char *, char *, struct stat *),
+#endif
                     create_message(unsigned int, char *, char *),
                     create_name(char *, int, signed char, time_t, unsigned int,
                                 unsigned int *, int *, char *, int, int),
@@ -4287,10 +4309,15 @@ extern int          assemble(char *, char *, int, char *, int, unsigned int,
 #endif
                             int, int, int *, off_t *),
                     fra_attach(void),
+                    fra_attach_features(void),
+                    fra_attach_features_passive(void),
                     fra_attach_passive(void),
                     fra_detach(void),
                     fsa_attach(char *),
+                    fsa_attach_features(char *),
+                    fsa_attach_features_passive(int, char *),
                     fsa_attach_passive(int, char *),
+                    fsa_check_id_changed(int),
                     fsa_detach(int),
                     get_afd_name(char *),
                     get_afd_path(int *, char **, char *),
@@ -4396,6 +4423,7 @@ extern int          assemble(char *, char *, int, char *, int, unsigned int,
                     startup_afd(void),
                     url_compare(char *, char *),
                     wmo2ascii(char *, char *, off_t *),
+                    write_system_data(struct afd_status *, int, int),
                     write_typesize_data(void),
                     xor_decrypt(unsigned char *, int, unsigned char *),
                     xor_encrypt(unsigned char *, int, unsigned char *);
@@ -4469,7 +4497,6 @@ extern void         *attach_buf(char *, int *, size_t *, char *, mode_t, int),
 #endif
                     get_additional_locked_files(int *, int *, char **),
                     get_alias_names(void),
-                    get_dir_alias(unsigned, char *),
                     get_dir_options(unsigned int, struct dir_options *),
                     get_dc_result_str(char *, int, int, int *, int *),
                     get_file_mask_list(unsigned int, int *, char **),
@@ -4502,7 +4529,11 @@ extern void         *attach_buf(char *, int *, size_t *, char *, mode_t, int),
 #ifdef _MAINTAINER_LOG
                     maintainer_log(char *, char *, int, char *, ...),
 #endif
+#ifdef HAVE_STATX
+                    *map_file(char *, int *, off_t *, struct statx *, int, ...),
+#else
                     *map_file(char *, int *, off_t *, struct stat *, int, ...),
+#endif
                     mode_t2str(mode_t, char *),
                     *mmap_resize(int, void *, size_t),
                     my_fillncpy(char *, const char *, const char, const size_t),
@@ -4560,8 +4591,7 @@ extern void         *attach_buf(char *, int *, size_t *, char *, mode_t, int),
                     validate_error_queue(int, unsigned int *, int,
                                          struct filetransfer_status *, int),
 #endif
-                    wmoheader_from_grib(char *, char *, char *),
-                    write_system_data(struct afd_status *, int, int);
+                    wmoheader_from_grib(char *, char *, char *);
 #ifdef _FIFO_DEBUG
 extern void         show_fifo_data(char, char *, char *, int, char *, int);
 #endif

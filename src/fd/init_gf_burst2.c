@@ -1,6 +1,6 @@
 /*
  *  init_gf_burst2.c - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 2014 - 2021 Holger Kiehl <Holger.Kiehl@dwd.de>
+ *  Copyright (c) 2014 - 2023 Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -148,8 +148,13 @@ init_gf_burst2(struct job   *p_new_db,
       {
          if (db.no_of_time_entries != 0)
          {
-            free(db.te);
+            if (db.te_malloc == YES)
+            {
+               free(db.te);
+            }
+            db.te_malloc = NO;
             db.te = &fra->te[0];
+            (void)strcpy(db.timezone, fra->timezone);
          }
       }
       else
@@ -160,21 +165,35 @@ init_gf_burst2(struct job   *p_new_db,
             {
                system_log(ERROR_SIGN, __FILE__, __LINE__,
                           "Could not malloc() memory : %s", strerror(errno));
+               db.te_malloc = NO;
             }
             else
             {
+               db.te_malloc = YES;
                if (eval_time_str("* * * * *", db.te, NULL) != SUCCESS)
                {
                   system_log(ERROR_SIGN, __FILE__, __LINE__,
                              "Failed to evaluate time string [* * * * *].");
                }
             }
+            db.timezone[0] = '\0';
          }
          else
          {
+            if (db.te_malloc == YES)
+            {
+               free(db.te);
+            }
+            db.te_malloc = NO;
             db.te = &fra->te[0];
+            (void)strcpy(db.timezone, fra->timezone);
          }
       }
+      if (db.index_file != NULL)
+      {
+         free(db.index_file);
+      }
+      db.index_file = p_new_db->index_file;
 
       free(p_new_db);
       p_new_db = NULL;

@@ -1,6 +1,6 @@
 /*
  *  gf_sftp.c - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 2006 - 2021 Holger Kiehl <Holger.Kiehl@dwd.de>
+ *  Copyright (c) 2006 - 2023 Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -241,26 +241,6 @@ main(int argc, char *argv[])
                     strerror(errno));
          exit(INCORRECT);
       }
-      if (fsa->trl_per_process < fsa->block_size)
-      {
-         blocksize = fsa->trl_per_process;
-      }
-      else
-      {
-         blocksize = fsa->block_size;
-      }
-   }
-   else
-   {
-      blocksize = fsa->block_size;
-   }
-   /* Fixme. SFTP can only handle a maximum of 262144 bytes. */
-   if (blocksize > MAX_SFTP_BLOCKSIZE)
-   {
-      trans_log(DEBUG_SIGN, __FILE__, __LINE__, NULL, NULL,
-                "Decreasing block size from %d to %d",
-                blocksize, MAX_SFTP_BLOCKSIZE);
-      blocksize = MAX_SFTP_BLOCKSIZE;
    }
 
    if ((signal(SIGINT, sig_kill) == SIG_ERR) ||
@@ -338,12 +318,85 @@ main(int argc, char *argv[])
    }
    else
    {
+      int max_blocksize = sftp_max_read_length(),
+          orig_blocksize;
+
       if (fsa->debug > NORMAL_MODE)
       {
          sftp_features();
          trans_db_log(INFO_SIGN, __FILE__, __LINE__, NULL,
                       "Connected. Agreed on SFTP version %u. [%s]",
                       sftp_version(), msg_str);
+      }
+
+      /*
+       * SFTP is very sensitive for the blocksize used. Newer
+       * versions of openssh allow us to retrieve the maximum
+       * allowed. Ensure we do not exceed this limit.
+       *
+       * On the other hand a value too low hurts throughput.
+       * So also make sure the value is not to low.
+       */
+      if ((fsa->trl_per_process > 0) &&
+          (fsa->trl_per_process < fsa->block_size))
+      {
+         blocksize = fsa->trl_per_process;
+         if (blocksize > max_blocksize)
+         {
+            trans_log(DEBUG_SIGN, __FILE__, __LINE__, NULL, NULL,
+                      "Decreasing block size from %d to %u",
+                      blocksize, max_blocksize);
+            blocksize = max_blocksize;
+         }
+      }
+      else
+      {
+         blocksize = fsa->block_size;
+         if (blocksize < MIN_SFTP_BLOCKSIZE)
+         {
+            int old_blocksize = blocksize;
+
+            if (MIN_SFTP_BLOCKSIZE > max_blocksize)
+            {
+               blocksize = max_blocksize;
+            }
+            else
+            {
+               blocksize = MIN_SFTP_BLOCKSIZE;
+            }
+            if (blocksize != old_blocksize)
+            {
+               trans_log(DEBUG_SIGN, __FILE__, __LINE__, NULL, NULL,
+                         "Changing block size from %d to %d",
+                         old_blocksize, blocksize);
+            }
+         }
+         else if (blocksize > max_blocksize)
+              {
+                 trans_log(DEBUG_SIGN, __FILE__, __LINE__, NULL, NULL,
+                           "Decreasing block size from %d to %d",
+                           blocksize, max_blocksize);
+                 blocksize = max_blocksize;
+              }
+      }
+      orig_blocksize = blocksize;
+      if ((status = sftp_set_blocksize(&blocksize)) != SUCCESS)
+      {
+         if (status == SFTP_BLOCKSIZE_CHANGED)
+         {
+            if (fsa->debug > NORMAL_MODE)
+            {
+               trans_db_log(INFO_SIGN, __FILE__, __LINE__, NULL,
+                            "Changed blocksize from %d to %d, due to server request.",
+                            orig_blocksize, blocksize);
+            }
+         }
+         else
+         {
+            /* sftp_set_blocksize() already printed why it failed. */
+            sftp_quit();
+            exit(SET_BLOCKSIZE_ERROR);
+         }
       }
    }
    connected = time(NULL);
@@ -575,11 +628,7 @@ main(int argc, char *argv[])
             int  local_file_length;
             char *p_local_tmp_file;
 
-#ifdef NEW_FRA
             if ((fra->dir_options & ONE_PROCESS_JUST_SCANNING) &&
-#else
-            if ((fra->dir_flag & ONE_PROCESS_JUST_SCANNING) &&
-#endif
                 ((db.special_flag & DISTRIBUTED_HELPER_JOB) == 0))
             {
                (void)gsf_check_fra((struct job *)&db);
@@ -593,11 +642,7 @@ main(int argc, char *argv[])
                }
             }
             if ((more_files_in_list == YES) &&
-#ifdef NEW_FRA
                 ((fra->dir_options & DO_NOT_PARALLELIZE) == 0) &&
-#else
-                ((fra->dir_flag & DO_NOT_PARALLELIZE) == 0) &&
-#endif
                 (fsa->active_transfers < fsa->allowed_transfers))
             {
                /* Tell fd that he may start some more helper jobs that */
@@ -609,11 +654,7 @@ main(int argc, char *argv[])
             /* will now start to retrieve data.                */
             if (gsf_check_fsa((struct job *)&db) != NEITHER)
             {
-#ifdef NEW_FRA
                if (((fra->dir_options & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#else
-               if (((fra->dir_flag & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#endif
                     (db.special_flag & DISTRIBUTED_HELPER_JOB))
                {
                   fsa->job_status[(int)db.job_no].no_of_files += files_to_retrieve;
@@ -698,11 +739,7 @@ main(int argc, char *argv[])
                p_local_tmp_file++;
             }
 
-#ifdef NEW_FRA
             if (((fra->dir_options & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#else
-            if (((fra->dir_flag & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#endif
                 (db.special_flag & DISTRIBUTED_HELPER_JOB))
             {
                int                  diff_no_of_files_done,
@@ -710,7 +747,11 @@ main(int argc, char *argv[])
                                     i;
                off_t                bytes_done;
                char                 *buffer;
+#ifdef HAVE_STATX
+               struct statx         stat_buf;
+#else
                struct stat          stat_buf;
+#endif
                struct retrieve_list tmp_rl;
 
                /* Allocate buffer to read data from the source file. */
@@ -790,7 +831,12 @@ main(int argc, char *argv[])
                      }
                      if (fsa->file_size_offset != -1)
                      {
+#ifdef HAVE_STATX
+                        if (statx(0, local_tmp_file, AT_STATX_SYNC_AS_STAT,
+                                  STATX_SIZE, &stat_buf) == -1)
+#else
                         if (stat(local_tmp_file, &stat_buf) == -1)
+#endif
                         {
                            if (fra->stupid_mode == APPEND_ONLY)
                            {
@@ -803,7 +849,11 @@ main(int argc, char *argv[])
                         }
                         else
                         {
+#ifdef HAVE_STATX
+                           offset = stat_buf.stx_size;
+#else
                            offset = stat_buf.st_size;
+#endif
                            prev_download_exists = YES;
                         }
                      }
@@ -1084,11 +1134,13 @@ main(int argc, char *argv[])
                         {
                            do
                            {
-                              if (sftp_multi_read_dispatch() == INCORRECT)
+                              if ((status = sftp_multi_read_dispatch()) != SUCCESS)
                               {
-                                  trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
-                                            "Failed to dispatch reads from remote file `%s' in %s",
-                                            tmp_rl.file_name, fra->dir_alias);
+                                  trans_log(ERROR_SIGN, __FILE__, __LINE__,
+                                            NULL, NULL,
+                                            "Failed to dispatch reads from remote file `%s' in %s (%d)",
+                                            tmp_rl.file_name, fra->dir_alias,
+                                            status);
                                   reset_values(files_retrieved,
                                                file_size_retrieved,
                                                files_to_retrieve,
@@ -1108,7 +1160,8 @@ main(int argc, char *argv[])
 
                               if ((status = sftp_multi_read_catch(buffer)) == INCORRECT)
                               {
-                                 trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
+                                 trans_log(ERROR_SIGN, __FILE__, __LINE__,
+                                           NULL, NULL,
                                            "Failed to read from remote file `%s' in %s",
                                            tmp_rl.file_name, fra->dir_alias);
                                  reset_values(files_retrieved,
@@ -1139,14 +1192,16 @@ main(int argc, char *argv[])
 
                               if (fsa->trl_per_process > 0)
                               {
-                                 limit_transfer_rate(status, fsa->trl_per_process,
+                                 limit_transfer_rate(status,
+                                                     fsa->trl_per_process,
                                                      clktck);
                               }
                               if (status > 0)
                               {
                                  if (write(fd, buffer, status) != status)
                                  {
-                                    trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
+                                    trans_log(ERROR_SIGN, __FILE__, __LINE__,
+                                              NULL, NULL,
                                               "Failed to write() to file `%s' : %s",
                                               local_tmp_file, strerror(errno));
                                     reset_values(files_retrieved,
@@ -1247,12 +1302,14 @@ main(int argc, char *argv[])
 
                            do
                            {
-                              if ((status = sftp_read(buffer,
-                                                      blocksize - buffer_offset)) == INCORRECT)
+                              if (((status = sftp_read(buffer,
+                                                       blocksize - buffer_offset)) == INCORRECT) ||
+                                  (status == -EPIPE))
                               {
                                  trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
-                                           "Failed to read from remote file `%s' in %s",
-                                           tmp_rl.file_name, fra->dir_alias);
+                                           "Failed to read from remote file `%s' in %s (%d)",
+                                           tmp_rl.file_name, fra->dir_alias,
+                                           status);
                                  reset_values(files_retrieved,
                                               file_size_retrieved,
                                               files_to_retrieve,
@@ -1401,9 +1458,10 @@ main(int argc, char *argv[])
                            old_time.actime = time(NULL);
                            if (tmp_rl.got_date != YES)
                            {
-                              struct stat stat_buf;
+                              struct stat rdir_stat_buf;
 
-                              if (sftp_stat(tmp_rl.file_name, &stat_buf) != SUCCESS)
+                              if (sftp_stat(tmp_rl.file_name,
+                                            &rdir_stat_buf) != SUCCESS)
                               {
                                  trans_log(DEBUG_SIGN, __FILE__, __LINE__, NULL, msg_str,
                                            "Failed to stat() file `%s' (%d).",
@@ -1416,7 +1474,7 @@ main(int argc, char *argv[])
                               }
                               else
                               {
-                                 old_time.modtime = stat_buf.st_mtime;
+                                 old_time.modtime = rdir_stat_buf.st_mtime;
                               }
                            }
                            else
@@ -1846,18 +1904,10 @@ main(int argc, char *argv[])
                                          (struct job *)&db);
                  if ((more_files_in_list == YES) &&
                      ((db.special_flag & DISTRIBUTED_HELPER_JOB) == 0) &&
-#ifdef NEW_FRA
                      (fra->dir_options & ONE_PROCESS_JUST_SCANNING))
-#else
-                     (fra->dir_flag & ONE_PROCESS_JUST_SCANNING))
-#endif
                  {
                     more_files_in_list = NO;
-#ifdef NEW_FRA
                     if (((fra->dir_options & DO_NOT_PARALLELIZE) == 0) &&
-#else
-                    if (((fra->dir_flag & DO_NOT_PARALLELIZE) == 0) &&
-#endif
                         (fsa->active_transfers < fsa->allowed_transfers))
                     {
                        /* Tell fd that he may start some more helper jobs that */
@@ -1900,7 +1950,7 @@ burst2_no_new_dir_mtime:
    }
 #endif /* _WITH_BURST_2 */
 
-   if (db.fsa_pos != INCORRECT)
+   if ((fsa != NULL) && (db.fsa_pos >= 0) && (fsa_pos_save == YES))
    {
       fsa->job_status[(int)db.job_no].connect_status = CLOSING_CONNECTION;
    }
@@ -2296,6 +2346,11 @@ gf_sftp_exit(void)
       }
       reset_fsa((struct job *)&db, exitflag, files_to_retrieve_shown,
                 file_size_to_retrieve_shown);
+      fsa_detach_pos(db.fsa_pos);
+   }
+   if ((fra != NULL) && (db.fra_pos >= 0) && (p_no_of_dirs != NULL))
+   {
+      fra_detach_pos(db.fra_pos);
    }
 
    send_proc_fin(NO);

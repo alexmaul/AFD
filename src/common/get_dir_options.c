@@ -1,6 +1,6 @@
 /*
  *  get_dir_options.c - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 2001 - 2021 Holger Kiehl <Holger.Kiehl@dwd.de>
+ *  Copyright (c) 2001 - 2024 Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -46,6 +46,7 @@ DESCR__S_M3
  **   16.02.2007 H.Kiehl Added 'warn time' option.
  **   24.02.2007 H.Kiehl Added 'inotify' option.
  **   24.11.2012 H.Kiehl Added support for another CRC type.
+ **   13.01.2024 H.Kiehl Extended 'store retrieve list' with 'once not exact'.
  **
  */
 DESCR__E_M3
@@ -263,7 +264,6 @@ get_dir_options(unsigned int dir_id, struct dir_options *d_o)
          {
             unsigned int flag = 0;
 
-# ifdef NEW_FRA
             if (fra[i].dir_options & INOTIFY_RENAME)
             {
                flag += INOTIFY_RENAME_FLAG;
@@ -280,24 +280,10 @@ get_dir_options(unsigned int dir_id, struct dir_options *d_o)
             {
                flag += INOTIFY_DELETE_FLAG;
             }
-# else
-            if (fra[i].dir_flag & INOTIFY_RENAME)
+            if (fra[i].dir_options & INOTIFY_ATTRIB)
             {
-               flag += INOTIFY_RENAME_FLAG;
+               flag += INOTIFY_ATTRIB_FLAG;
             }
-            if (fra[i].dir_flag & INOTIFY_CLOSE)
-            {
-               flag += INOTIFY_CLOSE_FLAG;
-            }
-            if (fra[i].dir_flag & INOTIFY_CREATE)
-            {
-               flag += INOTIFY_CREATE_FLAG;
-            }
-            if (fra[i].dir_flag & INOTIFY_DELETE)
-            {
-               flag += INOTIFY_DELETE_FLAG;
-            }
-# endif
             (void)snprintf(d_o->aoptions[d_o->no_of_dir_options],
                            MAX_OPTION_LENGTH,
                            "%s %u", INOTIFY_FLAG_ID, flag);
@@ -479,6 +465,17 @@ get_dir_options(unsigned int dir_id, struct dir_options *d_o)
                     goto done;
                  }
               }
+         else if (fra[i].stupid_mode == GET_ONCE_NOT_EXACT)
+              {
+                 (void)strcpy(d_o->aoptions[d_o->no_of_dir_options],
+                              STORE_RETRIEVE_LIST_ID);
+                 (void)strcat(d_o->aoptions[d_o->no_of_dir_options], " once not exact");
+                 d_o->no_of_dir_options++;
+                 if (d_o->no_of_dir_options >= MAX_NO_OPTIONS)
+                 {
+                    goto done;
+                 }
+              }
          else if (fra[i].stupid_mode == APPEND_ONLY)
               {
                  (void)strcpy(d_o->aoptions[d_o->no_of_dir_options],
@@ -501,7 +498,7 @@ get_dir_options(unsigned int dir_id, struct dir_options *d_o)
                goto done;
             }
          }
-         if (fra[i].dir_flag & DONT_GET_DIR_LIST)
+         if (fra[i].dir_options & DONT_GET_DIR_LIST)
          {
             (void)strcpy(d_o->aoptions[d_o->no_of_dir_options],
                          DO_NOT_GET_DIR_LIST_ID);
@@ -511,11 +508,7 @@ get_dir_options(unsigned int dir_id, struct dir_options *d_o)
                goto done;
             }
          }
-#ifdef NEW_FRA
          if (fra[i].dir_options & URL_CREATES_FILE_NAME)
-#else
-         if (fra[i].dir_flag & URL_CREATES_FILE_NAME)
-#endif
          {
             (void)strcpy(d_o->aoptions[d_o->no_of_dir_options],
                          URL_CREATES_FILE_NAME_ID);
@@ -525,11 +518,17 @@ get_dir_options(unsigned int dir_id, struct dir_options *d_o)
                goto done;
             }
          }
-#ifdef NEW_FRA
+         if (fra[i].dir_options & URL_WITH_INDEX_FILE_NAME)
+         {
+            (void)strcpy(d_o->aoptions[d_o->no_of_dir_options],
+                         URL_WITH_INDEX_FILE_NAME_ID);
+            d_o->no_of_dir_options++;
+            if (d_o->no_of_dir_options >= MAX_NO_OPTIONS)
+            {
+               goto done;
+            }
+         }
          if (fra[i].dir_options & NO_DELIMITER)
-#else
-         if (fra[i].dir_flag & NO_DELIMITER)
-#endif
          {
             (void)strcpy(d_o->aoptions[d_o->no_of_dir_options],
                          NO_DELIMITER_ID);
@@ -539,11 +538,7 @@ get_dir_options(unsigned int dir_id, struct dir_options *d_o)
                goto done;
             }
          }
-#ifdef NEW_FRA
          if (fra[i].dir_options & KEEP_PATH)
-#else
-         if (fra[i].dir_flag & KEEP_PATH)
-#endif
          {
             (void)strcpy(d_o->aoptions[d_o->no_of_dir_options], KEEP_PATH_ID);
             d_o->no_of_dir_options++;
@@ -552,11 +547,7 @@ get_dir_options(unsigned int dir_id, struct dir_options *d_o)
                goto done;
             }
          }
-#ifdef NEW_FRA
          if (fra[i].dir_options & ONE_PROCESS_JUST_SCANNING)
-#else
-         if (fra[i].dir_flag & ONE_PROCESS_JUST_SCANNING)
-#endif
          {
             (void)strcpy(d_o->aoptions[d_o->no_of_dir_options],
                          ONE_PROCESS_JUST_SCANNING_ID);
@@ -601,11 +592,7 @@ get_dir_options(unsigned int dir_id, struct dir_options *d_o)
                goto done;
             }
          }
-#ifdef NEW_FRA
          if (fra[i].dir_options & ACCEPT_DOT_FILES)
-#else
-         if (fra[i].dir_flag & ACCEPT_DOT_FILES)
-#endif
          {
             (void)strcpy(d_o->aoptions[d_o->no_of_dir_options],
                          ACCEPT_DOT_FILES_ID);
@@ -615,11 +602,7 @@ get_dir_options(unsigned int dir_id, struct dir_options *d_o)
                goto done;
             }
          }
-#ifdef NEW_FRA
          if (fra[i].dir_options & DO_NOT_PARALLELIZE)
-#else
-         if (fra[i].dir_flag & DO_NOT_PARALLELIZE)
-#endif
          {
             (void)strcpy(d_o->aoptions[d_o->no_of_dir_options],
                          DO_NOT_PARALLELIZE_ID);
@@ -629,11 +612,7 @@ get_dir_options(unsigned int dir_id, struct dir_options *d_o)
                goto done;
             }
          }
-#ifdef NEW_FRA
          if (fra[i].dir_options & DO_NOT_MOVE)
-#else
-         if (fra[i].dir_flag & DO_NOT_MOVE)
-#endif
          {
             (void)strcpy(d_o->aoptions[d_o->no_of_dir_options],
                          FORCE_COPY_ID);

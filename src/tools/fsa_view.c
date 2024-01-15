@@ -1,6 +1,6 @@
 /*
  *  fsa_view.c - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 1996 - 2022 Deutscher Wetterdienst (DWD),
+ *  Copyright (c) 1996 - 2023 Deutscher Wetterdienst (DWD),
  *                            Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
@@ -384,6 +384,10 @@ main(int argc, char *argv[])
          if (fsa[j].protocol_options & FTP_DISABLE_MLST)
          {
             (void)fprintf(stdout, "disable_mlst ");
+         }
+         if (fsa[j].protocol_options2 & FTP_SEND_UTF8_ON)
+         {
+            (void)fprintf(stdout, "send_utf8_on ");
          }
          if (fsa[j].protocol_options & IMPLICIT_FTPS)
          {
@@ -917,10 +921,6 @@ main(int argc, char *argv[])
                     fsa[j].bytes_send);
       (void)fprintf(stdout, "Connections          : %u\n",
                     fsa[j].connections);
-#ifndef NEW_FSA
-      (void)fprintf(stdout, "MC NACK counter      : %u\n",
-                    fsa[j].mc_nack_counter);
-#endif
       (void)fprintf(stdout, "Jobs queued          : %u\n",
                     fsa[j].jobs_queued);
       (void)fprintf(stdout, "Active transfers     : %d\n",
@@ -932,23 +932,11 @@ main(int argc, char *argv[])
                     (pri_off_t)fsa[j].transfer_rate_limit);
       (void)fprintf(stdout, "Rate limit per proc  : %ld\n",
                     (pri_off_t)fsa[j].trl_per_process);
-# ifndef NEW_FSA
-      (void)fprintf(stdout, "MC Rate limit        : %ld\n",
-                    (pri_off_t)fsa[j].mc_ct_rate_limit);
-      (void)fprintf(stdout, "MC Rate limit/proc   : %ld\n",
-                    (pri_off_t)fsa[j].mc_ctrl_per_process);
-# endif
 #else
       (void)fprintf(stdout, "Rate limit           : %lld\n",
                     (pri_off_t)fsa[j].transfer_rate_limit);
       (void)fprintf(stdout, "Rate limit per proc  : %lld\n",
                     (pri_off_t)fsa[j].trl_per_process);
-# ifndef NEW_FSA
-      (void)fprintf(stdout, "MC Rate limit        : %lld\n",
-                    (pri_off_t)fsa[j].mc_ct_rate_limit);
-      (void)fprintf(stdout, "MC Rate limit/proc   : %lld\n",
-                    (pri_off_t)fsa[j].mc_ctrl_per_process);
-# endif
 #endif
 
       if (fsa[j].real_hostname[0][0] != GROUP_IDENTIFIER)
@@ -1169,6 +1157,13 @@ main(int argc, char *argv[])
                      (void)fprintf(stdout, " ");
                   }
                }
+            }
+            (void)fprintf(stdout, "\n");
+            (void)fprintf(stdout, "Special flag        ");
+            for (i = 0; i < sfsa.allowed_transfers; i++)
+            {
+               (void)fprintf(stdout, "|%*d ", max_digits,
+                             (int)sfsa.job_status[i].special_flag);
             }
             (void)fprintf(stdout, "\n");
             (void)fprintf(stdout, "Number of files     ");
@@ -1425,6 +1420,8 @@ main(int argc, char *argv[])
                      (void)fprintf(stdout, "Connect status       : Unknown status\n");
                      break;
                }
+               (void)fprintf(stdout, "Special flag         : %d\n",
+                             (int)fsa[j].job_status[i].special_flag);
                (void)fprintf(stdout, "Number of files      : %d\n",
                              fsa[j].job_status[i].no_of_files);
                (void)fprintf(stdout, "No. of files done    : %d\n",

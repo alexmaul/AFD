@@ -58,7 +58,7 @@ DESCR__S_M3
  **   URL and stores them in the given buffer if supplied. The url must
  **   have the following format:
  **
- **   <scheme>://[[<user>][;fingerprint=<SSH fingerprint>][;auth=<login|plain>;user=<user name>;][:<password>]@]<host>[:<port>][/<url-path>][;type=<i|a|d|n>][;server=<server name>][;protocol=<protocol number>][;auth=<basic|aws4-hmac-sha256>][;region=<region name>][;service=s3]
+ **   <scheme>://[[<user>][;fingerprint=<SSH fingerprint>][;auth=<login|plain>;user=<user name>;][:<password>]@]<host>[:<port>][/<url-path>][;type=<i|a|d|n>][;server=<server name>][;protocol=<protocol number>][;auth=<basic|digest|aws4-hmac-sha256|aws-no-sign-request>][;region=<region name>][;service=s3]
  **
  **   Special characters may be masked with a \ or with a % sign plus two
  **   hexa digits representing the ASCII character. A plus behind the @
@@ -1949,6 +1949,20 @@ url_evaluate(char          *url,
                                    *auth = AUTH_BASIC;
                                    ptr += 5;
                                 }
+                                /* digest */
+                                else if ((*ptr == 'd') && (*(ptr + 1) == 'i') &&
+                                         (*(ptr + 2) == 'g') &&
+                                         (*(ptr + 3) == 'e') &&
+                                         (*(ptr + 4) == 's') &&
+                                         (*(ptr + 5) == 't') &&
+                                         ((*(ptr + 6) == '\0') ||
+                                          (*(ptr + 6) == ';') ||
+                                          (*(ptr + 6) == ' ') ||
+                                          (*(ptr + 6) == '\0')))
+                                     {
+                                        *auth = AUTH_DIGEST;
+                                        ptr += 6;
+                                     }
                                      /* aws4-hmac-sha256 */
                                 else if ((*ptr == 'a') &&
                                          (*(ptr + 1) == 'w') &&
@@ -1972,6 +1986,33 @@ url_evaluate(char          *url,
                                      {
                                         *auth = AUTH_AWS4_HMAC_SHA256;
                                         ptr += 16;
+                                     }
+                                     /* aws-no-sign-request */
+                                else if ((*ptr == 'a') &&
+                                         (*(ptr + 1) == 'w') &&
+                                         (*(ptr + 2) == 's') &&
+                                         (*(ptr + 3) == '-') &&
+                                         (*(ptr + 4) == 'n') &&
+                                         (*(ptr + 5) == 'o') &&
+                                         (*(ptr + 6) == '-') &&
+                                         (*(ptr + 7) == 's') &&
+                                         (*(ptr + 8) == 'i') &&
+                                         (*(ptr + 9) == 'g') &&
+                                         (*(ptr + 10) == 'n') &&
+                                         (*(ptr + 11) == '-') &&
+                                         (*(ptr + 12) == 'r') &&
+                                         (*(ptr + 13) == 'e') &&
+                                         (*(ptr + 14) == 'q') &&
+                                         (*(ptr + 15) == 'u') &&
+                                         (*(ptr + 16) == 'e') &&
+                                         (*(ptr + 17) == 's') &&
+                                         (*(ptr + 18) == 't') &&
+                                         ((*(ptr + 19) == ';') ||
+                                          (*(ptr + 19) == ' ') ||
+                                          (*(ptr + 19) == '\0')))
+                                     {
+                                        *auth = AUTH_AWS_NO_SIGN_REQUEST;
+                                        ptr += 19;
                                      }
                                      else
                                      {
@@ -2750,12 +2791,12 @@ url_get_error(int error_mask, char *error_str, int error_str_length)
          {
             if (length)
             {
-               tlen = snprintf(&error_str[length], error_str_length - length,
+               tlen = snprintf(&error_str[length], error_str_length,
                                ", user name may only be %d bytes long",
                                MAX_USER_NAME_LENGTH);
-               if (tlen > (error_str_length - length))
+               if (tlen > error_str_length)
                {
-                  length = error_str_length - length;
+                  length = error_str_length;
                }
                else
                {
@@ -2837,12 +2878,12 @@ url_get_error(int error_mask, char *error_str, int error_str_length)
          {
             if (length)
             {
-               tlen = snprintf(&error_str[length], error_str_length - length,
+               tlen = snprintf(&error_str[length], error_str_length,
                                ", password may only be %d bytes long",
                                MAX_USER_NAME_LENGTH);
-               if (tlen > (error_str_length - length))
+               if (tlen > error_str_length)
                {
-                  length = error_str_length - length;
+                  length = error_str_length;
                }
                else
                {
@@ -2866,12 +2907,12 @@ url_get_error(int error_mask, char *error_str, int error_str_length)
          {
             if (length)
             {
-               tlen = snprintf(&error_str[length], error_str_length - length,
+               tlen = snprintf(&error_str[length], error_str_length,
                                ", hostname may only be %d bytes long",
                                MAX_REAL_HOSTNAME_LENGTH);
-               if (tlen > (error_str_length - length))
+               if (tlen > error_str_length)
                {
-                  length = error_str_length - length;
+                  length = error_str_length;
                }
                else
                {
@@ -2895,12 +2936,12 @@ url_get_error(int error_mask, char *error_str, int error_str_length)
          {
             if (length)
             {
-               tlen = snprintf(&error_str[length], error_str_length - length,
+               tlen = snprintf(&error_str[length], error_str_length,
                                ", port number may only be %d bytes long",
                                MAX_INT_LENGTH);
-               if (tlen > (error_str_length - length))
+               if (tlen > error_str_length)
                {
-                  length = error_str_length - length;
+                  length = error_str_length;
                }
                else
                {
@@ -2924,12 +2965,12 @@ url_get_error(int error_mask, char *error_str, int error_str_length)
          {
             if (length)
             {
-               tlen = snprintf(&error_str[length], error_str_length - length,
+               tlen = snprintf(&error_str[length], error_str_length,
                                ", time modifier in path may only be %d bytes long",
                                MAX_INT_LENGTH);
-               if (tlen > (error_str_length - length))
+               if (tlen > error_str_length)
                {
-                  length = error_str_length - length;
+                  length = error_str_length;
                }
                else
                {
@@ -2968,12 +3009,12 @@ url_get_error(int error_mask, char *error_str, int error_str_length)
          {
             if (length)
             {
-               tlen = snprintf(&error_str[length], error_str_length - length,
+               tlen = snprintf(&error_str[length], error_str_length,
                                ", recipient may only be %d bytes long",
                                MAX_RECIPIENT_LENGTH);
-               if (tlen > (error_str_length - length))
+               if (tlen > error_str_length)
                {
-                  length = error_str_length - length;
+                  length = error_str_length;
                }
                else
                {
@@ -3006,7 +3047,7 @@ url_get_error(int error_mask, char *error_str, int error_str_length)
             }
             error_str_length -= length;
          }
-         if ((error_str_length > 23) && (error_mask & TARGET_DIR_CAN_CHANGE))
+         if ((error_str_length > 28) && (error_mask & TARGET_DIR_CAN_CHANGE))
          {
             if (length)
             {
@@ -3025,12 +3066,12 @@ url_get_error(int error_mask, char *error_str, int error_str_length)
          {
             if (length)
             {
-               tlen = snprintf(&error_str[length], error_str_length - length,
+               tlen = snprintf(&error_str[length], error_str_length,
                                ", protocol version may only be %d bytes long",
                                MAX_INT_LENGTH);
-               if (tlen > (error_str_length - length))
+               if (tlen > error_str_length)
                {
-                  length = error_str_length - length;
+                  length = error_str_length;
                }
                else
                {
@@ -3082,12 +3123,12 @@ url_get_error(int error_mask, char *error_str, int error_str_length)
          {
             if (length)
             {
-               tlen = snprintf(&error_str[length], error_str_length - length,
+               tlen = snprintf(&error_str[length], error_str_length,
                                ", server name may only be %d bytes long",
                                MAX_REAL_HOSTNAME_LENGTH);
-               if (tlen > (error_str_length - length))
+               if (tlen > error_str_length)
                {
-                  length = error_str_length - length;
+                  length = error_str_length;
                }
                else
                {
@@ -3148,17 +3189,17 @@ url_get_error(int error_mask, char *error_str, int error_str_length)
             }
             error_str_length -= length;
          }
-         if ((error_str_length > (43 + MAX_INT_LENGTH)) &&
+         if ((error_str_length > (52 + MAX_INT_LENGTH)) &&
              (error_mask & EXEC_CMD_TO_LONG))
          {
             if (length)
             {
-               tlen = snprintf(&error_str[length], error_str_length - length,
+               tlen = snprintf(&error_str[length], error_str_length,
                                ", exec command (%%e) to long, may only be %d bytes long",
                                MAX_RECIPIENT_LENGTH);
-               if (tlen > (error_str_length - length))
+               if (tlen > error_str_length)
                {
-                  length = error_str_length - length;
+                  length = error_str_length;
                }
             }
             else
@@ -3178,12 +3219,12 @@ url_get_error(int error_mask, char *error_str, int error_str_length)
          {
             if (length)
             {
-               tlen = snprintf(&error_str[length], error_str_length - length,
+               tlen = snprintf(&error_str[length], error_str_length,
                                ", region name may only be %d bytes long",
                                MAX_REAL_HOSTNAME_LENGTH);
-               if (tlen > (error_str_length - length))
+               if (tlen > error_str_length)
                {
-                  length = error_str_length - length;
+                  length = error_str_length;
                }
                else
                {
@@ -3206,11 +3247,11 @@ url_get_error(int error_mask, char *error_str, int error_str_length)
          {
             if (length)
             {
-               tlen = snprintf(&error_str[length], error_str_length - length,
+               tlen = snprintf(&error_str[length], error_str_length,
                                ", parameter missing");
-               if (tlen > (error_str_length - length))
+               if (tlen > error_str_length)
                {
-                  length = error_str_length - length;
+                  length = error_str_length;
                }
                else
                {
@@ -3232,11 +3273,11 @@ url_get_error(int error_mask, char *error_str, int error_str_length)
          {
             if (length)
             {
-               tlen = snprintf(&error_str[length], error_str_length - length,
+               tlen = snprintf(&error_str[length], error_str_length,
                                ", unknown value");
-               if (tlen > (error_str_length - length))
+               if (tlen > error_str_length)
                {
-                  length = error_str_length - length;
+                  length = error_str_length;
                }
                else
                {
@@ -3259,12 +3300,12 @@ url_get_error(int error_mask, char *error_str, int error_str_length)
             if (length)
             {
                (void)strcpy(&error_str[length], ", buffer to short");
-               error_str_length -= 17;
+               error_str_length -= (17 + 1);
             }
             else
             {
                (void)strcpy(error_str, "buffer to short");
-               error_str_length -= 15;
+               error_str_length -= (15 + 1);
             }
          }
       }

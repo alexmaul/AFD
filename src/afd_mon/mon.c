@@ -1,6 +1,6 @@
 /*
  *  mon.c - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 1998 - 2020 Deutscher Wetterdienst (DWD),
+ *  Copyright (c) 1998 - 2022 Deutscher Wetterdienst (DWD),
  *                            Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
@@ -56,6 +56,9 @@ DESCR__E_M1
 #include <signal.h>          /* signal()                                 */
 #include <ctype.h>           /* isdigit()                                */
 #include <time.h>            /* time()                                   */
+#ifdef WITH_SSL
+# include <openssl/ssl.h>
+#endif
 #include <sys/types.h>
 #include <sys/time.h>        /* struct timeval                           */
 #include <sys/stat.h>
@@ -67,7 +70,7 @@ DESCR__E_M1
 #include <errno.h>
 #include "mondefs.h"
 #include "logdefs.h"
-#include "afdddefs.h"
+#include "afdd_common_defs.h"
 #include "version.h"
 
 
@@ -85,6 +88,9 @@ int                      afd_no,
                          sock_fd,
                          sys_log_fd = STDERR_FILENO,
                          timeout_flag;
+#ifdef WITH_SSL
+SSL                      *ssl_con = NULL;
+#endif
 time_t                   new_hour_time;
 size_t                   adl_size,
                          ahl_size,
@@ -95,7 +101,6 @@ long                     tcp_timeout = 120L;
 char                     msg_str[MAX_RET_MSG_LENGTH],
                          *p_mon_alias,
                          *p_work_dir;
-FILE                     *p_control;
 struct mon_status_area   *msa;
 struct afd_dir_list      *adl = NULL;
 struct afd_host_list     *ahl = NULL;
@@ -137,7 +142,11 @@ main(int argc, char *argv[])
                   retry_fifo[MAX_PATH_LENGTH],
                   work_dir[MAX_PATH_LENGTH];
    fd_set         rset;
+#ifdef HAVE_STATX
+   struct statx   stat_buf;
+#else
    struct stat    stat_buf;
+#endif
    struct timeval timeout;
 
    CHECK_FOR_VERSION(argc, argv);
@@ -181,7 +190,12 @@ main(int argc, char *argv[])
    (void)strcat(mon_log_fifo, MON_LOG_FIFO);
 
    /* Open (create) monitor log fifo. */
-   if ((stat(mon_log_fifo, &stat_buf) < 0) || (!S_ISFIFO(stat_buf.st_mode)))
+#ifdef HAVE_STATX
+   if ((statx(0, mon_log_fifo, AT_STATX_SYNC_AS_STAT,
+              STATX_MODE, &stat_buf) == -1) || (!S_ISFIFO(stat_buf.stx_mode)))
+#else
+   if ((stat(mon_log_fifo, &stat_buf) == -1) || (!S_ISFIFO(stat_buf.st_mode)))
+#endif
    {
       if (make_fifo(mon_log_fifo) < 0)
       {
@@ -203,7 +217,12 @@ main(int argc, char *argv[])
    }
 
    /* Open (create) retry fifo. */
-   if ((stat(retry_fifo, &stat_buf) < 0) || (!S_ISFIFO(stat_buf.st_mode)))
+#ifdef HAVE_STATX
+   if ((statx(0, retry_fifo, AT_STATX_SYNC_AS_STAT,
+              STATX_MODE, &stat_buf) == -1) || (!S_ISFIFO(stat_buf.stx_mode)))
+#else
+   if ((stat(retry_fifo, &stat_buf) == -1) || (!S_ISFIFO(stat_buf.st_mode)))
+#endif
    {
       if (make_fifo(retry_fifo) < 0)
       {
@@ -266,7 +285,11 @@ main(int argc, char *argv[])
       timeout_flag = OFF;
       if ((status = tcp_connect(msa[afd_no].hostname[(int)msa[afd_no].afd_toggle],
                                 msa[afd_no].port[(int)msa[afd_no].afd_toggle],
-                                NO)) != SUCCESS)
+                                NO
+#ifdef WITH_SSL
+                                , msa[afd_no].options & ENABLE_TLS_ENCRYPTION
+#endif
+                                )) != SUCCESS)
       {
          if (timeout_flag == OFF)
          {
@@ -598,19 +621,48 @@ done:
 }
 
 
-/*############################## tcp_cmd() ##############################*/
+/*++++++++++++++++++++++++++++++ tcp_cmd() ++++++++++++++++++++++++++++++*/
 static int
 tcp_cmd(char *fmt, ...)
 {
    int     bytes_buffered,
-           bytes_done;
+           bytes_done,
+           length;
+   char    buf[MAX_LINE_LENGTH + 1];
    va_list ap;
 
    va_start(ap, fmt);
-   (void)vfprintf(p_control, fmt, ap);
+   length = vsnprintf(buf, MAX_LINE_LENGTH, fmt, ap);
    va_end(ap);
-   (void)fprintf(p_control, "\r\n");
-   (void)fflush(p_control);
+   if (length > MAX_LINE_LENGTH)
+   {
+      mon_log(ERROR_SIGN, __FILE__, __LINE__, 0L, msg_str,
+              "tcp_cmd(): Command to long (%d > %d)", length, MAX_LINE_LENGTH);
+      return(INCORRECT);
+   }
+   buf[length] = '\r';
+   buf[length + 1] = '\n';
+   length += 2;
+#ifdef WITH_SSL
+   if (ssl_con == NULL)
+   {
+#endif
+      if (write(sock_fd, buf, length) != length)
+      {
+         mon_log(ERROR_SIGN, __FILE__, __LINE__, 0L, msg_str,
+                 "tcp_cmd(): write() error : %s", strerror(errno));
+         return(INCORRECT);
+      }
+#ifdef WITH_SSL
+   }
+   else
+   {
+      if (ssl_write(ssl_con, buf, length) != length)
+      {
+         return(INCORRECT);
+      }
+   }
+#endif
 
    while ((bytes_buffered = read_msg()) != INCORRECT)
    {

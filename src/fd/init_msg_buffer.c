@@ -1,6 +1,6 @@
 /*
  *  init_msg_buffer.c - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 1998 - 2022 Holger Kiehl <Holger.Kiehl@dwd.de>
+ *  Copyright (c) 1998 - 2023 Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -143,7 +143,11 @@ init_msg_buffer(void)
    char         tbuf1[20],
                 tbuf2[20];
 #endif
+#ifdef HAVE_STATX
+   struct statx stat_buf;
+#else
    struct stat  stat_buf;
+#endif
    DIR          *dp;
 
    removed_jobs = removed_messages = file_mask_to_remove = 0;
@@ -154,22 +158,12 @@ init_msg_buffer(void)
    /* If necessary attach to the buffers. */
    if (mdb_fd == -1)
    {
-      size_t new_size = (MSG_CACHE_BUF_SIZE * sizeof(struct msg_cache_buf)) +
-                        AFD_WORD_OFFSET;
-      char   fullname[MAX_PATH_LENGTH];
-
-      (void)snprintf(fullname, MAX_PATH_LENGTH, "%s%s%s",
-                     p_work_dir, FIFO_DIR, MSG_CACHE_FILE);
-      if ((ptr = attach_buf(fullname, &mdb_fd, &new_size, "FD",
-                            FILE_MODE, NO)) == (caddr_t) -1)
+      if (mdb_attach() != SUCCESS)
       {
          system_log(FATAL_SIGN, __FILE__, __LINE__,
-                    "Failed to mmap() `%s' : %s", fullname, strerror(errno));
+                    "Failed to attach to MDB.");
          exit(INCORRECT);
       }
-      no_msg_cached = (int *)ptr;
-      ptr += AFD_WORD_OFFSET;
-      mdb = (struct msg_cache_buf *)ptr;
    }
 
    if (qb_fd == -1)
@@ -281,20 +275,43 @@ stat_again:
                  "Timeout arrived for waiting (180 s) for AMG to finish writting to JID structure.");
    }
 
+#ifdef HAVE_STATX
+   if (statx(jd_fd, "", AT_STATX_SYNC_AS_STAT | AT_EMPTY_PATH,
+             STATX_SIZE, &stat_buf) == -1)
+#else
    if (fstat(jd_fd, &stat_buf) == -1)
+#endif
    {
-      system_log(FATAL_SIGN, __FILE__, __LINE__, "Failed to fstat() `%s' : %s",
+      system_log(FATAL_SIGN, __FILE__, __LINE__,
+#ifdef HAVE_STATX
+                 "Failed to statx() `%s' : %s",
+#else
+                 "Failed to fstat() `%s' : %s",
+#endif
                  job_id_data_file, strerror(errno));
       exit(INCORRECT);
    }
    sleep_counter = 0;
+#ifdef HAVE_STATX
+   while (stat_buf.stx_size == 0)
+#else
    while (stat_buf.st_size == 0)
+#endif
    {
       (void)my_usleep(100000L);
+#ifdef HAVE_STATX
+      if (statx(jd_fd, "", AT_STATX_SYNC_AS_STAT | AT_EMPTY_PATH,
+                STATX_SIZE, &stat_buf) == -1)
+#else
       if (fstat(jd_fd, &stat_buf) == -1)
+#endif
       {
          system_log(FATAL_SIGN, __FILE__, __LINE__,
+#ifdef HAVE_STATX
+                    "Failed to statx() `%s' : %s",
+#else
                     "Failed to fstat() `%s' : %s",
+#endif
                     job_id_data_file, strerror(errno));
          exit(INCORRECT);
       }
@@ -326,9 +343,19 @@ stat_again:
 #else
    lock_region_w(jd_fd, 1);
 #endif
+#ifdef HAVE_STATX
+   if (statx(jd_fd, "", AT_STATX_SYNC_AS_STAT | AT_EMPTY_PATH,
+             STATX_SIZE, &stat_buf) == -1)
+#else
    if (fstat(jd_fd, &stat_buf) == -1)
+#endif
    {
-      system_log(FATAL_SIGN, __FILE__, __LINE__, "Failed to fstat() `%s' : %s",
+      system_log(FATAL_SIGN, __FILE__, __LINE__,
+#ifdef HAVE_STATX
+                 "Failed to statx() `%s' : %s",
+#else
+                 "Failed to fstat() `%s' : %s",
+#endif
                  job_id_data_file, strerror(errno));
       exit(INCORRECT);
    }
@@ -338,13 +365,27 @@ stat_again:
    unlock_region(jd_fd, 1);
 #endif
 
+#ifdef HAVE_STATX
+   if (stat_buf.stx_size > 0)
+#else
    if (stat_buf.st_size > 0)
+#endif
    {
 #ifdef HAVE_MMAP
-      if ((ptr = mmap(0, stat_buf.st_size, (PROT_READ | PROT_WRITE),
+      if ((ptr = mmap(0,
+# ifdef HAVE_STATX
+                      stat_buf.stx_size, (PROT_READ | PROT_WRITE),
+# else
+                      stat_buf.st_size, (PROT_READ | PROT_WRITE),
+# endif
                       MAP_SHARED, jd_fd, 0)) == (caddr_t) -1)
 #else
-      if ((ptr = mmap_emu(0, stat_buf.st_size, (PROT_READ | PROT_WRITE),
+      if ((ptr = mmap_emu(0,
+# ifdef HAVE_STATX
+                          stat_buf.stx_size, (PROT_READ | PROT_WRITE),
+# else
+                          stat_buf.st_size, (PROT_READ | PROT_WRITE),
+# endif
                           MAP_SHARED, job_id_data_file, 0)) == (caddr_t) -1)
 #endif
       {
@@ -372,7 +413,11 @@ stat_again:
       exit(INCORRECT);
    }
 
+#ifdef HAVE_STATX
+   if (((*no_of_job_ids * sizeof(struct job_id_data)) + AFD_WORD_OFFSET) > stat_buf.stx_size)
+#else
    if (((*no_of_job_ids * sizeof(struct job_id_data)) + AFD_WORD_OFFSET) > stat_buf.st_size)
+#endif
    {
       system_log(DEBUG_SIGN, __FILE__, __LINE__,
 #if SIZEOF_OFF_T == 4
@@ -380,12 +425,20 @@ stat_again:
 #else
                  "Hmmmm. Size of `%s' is %lld bytes, but calculation says it should be %d bytes (%d jobs)!",
 #endif
+#ifdef HAVE_STATX
+                 JOB_ID_DATA_FILE, (pri_off_t)stat_buf.stx_size,
+#else
                  JOB_ID_DATA_FILE, (pri_off_t)stat_buf.st_size,
+#endif
                  (*no_of_job_ids * sizeof(struct job_id_data)) + AFD_WORD_OFFSET,
                  *no_of_job_ids);
       ptr = (char *)jd - AFD_WORD_OFFSET;
 #ifdef HAVE_MMAP
+# ifdef HAVE_STATX
+      if (munmap(ptr, stat_buf.stx_size) == -1)
+# else
       if (munmap(ptr, stat_buf.st_size) == -1)
+# endif
 #else
       if (munmap_emu(ptr) == -1)
 #endif
@@ -406,11 +459,20 @@ stat_again:
    }
 #ifdef _DEBUG
    system_log(DEBUG_SIGN, __FILE__, __LINE__,
+# ifdef HAVE_STATX
+              "stat_buf.stx_size = %d|no_of_job_ids = %d|struct size = %d|total plus word offset = %d",
+              stat_buf.stx_size, *no_of_job_ids, sizeof(struct job_id_data),
+# else
               "stat_buf.st_size = %d|no_of_job_ids = %d|struct size = %d|total plus word offset = %d",
               stat_buf.st_size, *no_of_job_ids, sizeof(struct job_id_data),
+# endif
               (*no_of_job_ids * sizeof(struct job_id_data)) + AFD_WORD_OFFSET);
 #endif
+#ifdef HAVE_STATX
+   jid_struct_size = stat_buf.stx_size;
+#else
    jid_struct_size = stat_buf.st_size;
+#endif
 
    /* Read and store current message list. */
    if (read_current_msg_list(&cml, &no_of_current_msg) == INCORRECT)
@@ -554,16 +616,31 @@ stat_again:
          }
 
          (void)strcpy(p_msg_dir, p_dir->d_name);
+#ifdef HAVE_STATX
+         if (statx(0, msg_dir, AT_STATX_SYNC_AS_STAT,
+                   STATX_MTIME, &stat_buf) == -1)
+#else
          if (stat(msg_dir, &stat_buf) == -1)
+#endif
          {
             system_log(WARN_SIGN, __FILE__, __LINE__,
-                       "Failed to stat() `%s' : %s", msg_dir, strerror(errno));
+#ifdef HAVE_STATX
+                       "Failed to statx() `%s' : %s",
+#else
+                       "Failed to stat() `%s' : %s",
+#endif
+                       msg_dir, strerror(errno));
          }
          else
          {
 #ifdef _OUTPUT_LOG
+# ifdef HAVE_STATX
+            if (current_time >
+                (stat_buf.stx_mtime.tv_sec + (SWITCH_FILE_TIME * max_output_log_files)))
+# else
             if (current_time >
                 (stat_buf.st_mtime + (SWITCH_FILE_TIME * max_output_log_files)))
+# endif
             {
 #endif
                unsigned int job_id = (unsigned int)strtoul(p_dir->d_name, (char **)NULL, 16);
@@ -1204,9 +1281,13 @@ list_job_to_remove(int                cache_pos,
     */
    if (dir_id_pos != -1)
    {
-      int         fd;
-      char        file[MAX_PATH_LENGTH];
-      struct stat stat_buf;
+      int          fd;
+      char         file[MAX_PATH_LENGTH];
+#ifdef HAVE_STATX
+      struct statx stat_buf;
+#else
+      struct stat  stat_buf;
+#endif
 
       (void)strcpy(file, p_work_dir);
       (void)strcat(file, FIFO_DIR);
@@ -1218,25 +1299,49 @@ list_job_to_remove(int                cache_pos,
          exit(INCORRECT);
       }
 
+#ifdef HAVE_STATX
+      if (statx(fd, "", AT_STATX_SYNC_AS_STAT | AT_EMPTY_PATH,
+                STATX_SIZE, &stat_buf) == -1)
+#else
       if (fstat(fd, &stat_buf) == -1)
+#endif
       {
          system_log(FATAL_SIGN, __FILE__, __LINE__,
-                    "Failed to fstat() `%s' : %s", file, strerror(errno));
+#ifdef HAVE_STATX
+                    "Failed to statx() `%s' : %s",
+#else
+                    "Failed to fstat() `%s' : %s",
+#endif
+                    file, strerror(errno));
          (void)close(fd);
          exit(INCORRECT);
       }
 
+#ifdef HAVE_STATX
+      if (stat_buf.stx_size != 0)
+#else
       if (stat_buf.st_size != 0)
+#endif
       {
          int                 *no_of_dir_names;
          char                *ptr;
          struct dir_name_buf *dnb;
 
 #ifdef HAVE_MMAP
-         if ((ptr = mmap(0, stat_buf.st_size, (PROT_READ | PROT_WRITE),
+         if ((ptr = mmap(0,
+# ifdef HAVE_STATX
+                         stat_buf.stx_size, (PROT_READ | PROT_WRITE),
+# else
+                         stat_buf.st_size, (PROT_READ | PROT_WRITE),
+# endif
                          MAP_SHARED, fd, 0)) == (caddr_t) -1)
 #else
-         if ((ptr = mmap_emu(0, stat_buf.st_size, (PROT_READ | PROT_WRITE),
+         if ((ptr = mmap_emu(0,
+# ifdef HAVE_STATX
+                             stat_buf.stx_size, (PROT_READ | PROT_WRITE),
+# else
+                             stat_buf.st_size, (PROT_READ | PROT_WRITE),
+# endif
                              MAP_SHARED, file, 0)) == (caddr_t) -1)
 #endif
          {
@@ -1307,7 +1412,11 @@ list_job_to_remove(int                cache_pos,
 
          ptr -= AFD_WORD_OFFSET;
 #ifdef HAVE_MMAP
+# ifdef HAVE_STATX
+         if (munmap(ptr, stat_buf.stx_size) == -1)
+# else
          if (munmap(ptr, stat_buf.st_size) == -1)
+# endif
 #else
          if (munmap_emu(ptr) == -1)
 #endif
@@ -1415,7 +1524,11 @@ remove_jobs(int jd_fd, off_t *jid_struct_size, char *job_id_data_file)
        */
       if (((*no_of_job_ids * sizeof(struct job_id_data)) + AFD_WORD_OFFSET) > *jid_struct_size)
       {
+#ifdef HAVE_STATX
+         struct statx stat_buf;
+#else
          struct stat stat_buf;
+#endif
 
          system_log(DEBUG_SIGN, __FILE__, __LINE__,
 #if SIZEOF_OFF_T == 4
@@ -1436,20 +1549,43 @@ remove_jobs(int jd_fd, off_t *jid_struct_size, char *job_id_data_file)
                        "Failed to munmap() `%s' : %s",
                        job_id_data_file, strerror(errno));
          }
+#ifdef HAVE_STATX
+         if (statx(jd_fd, "", AT_STATX_SYNC_AS_STAT | AT_EMPTY_PATH,
+                   STATX_SIZE, &stat_buf) == -1)
+#else
          if (fstat(jd_fd, &stat_buf) == -1)
+#endif
          {
             system_log(FATAL_SIGN, __FILE__, __LINE__,
+#ifdef HAVE_STATX
+                       "Failed to statx() `%s' : %s",
+#else
                        "Failed to fstat() `%s' : %s",
+#endif
                        job_id_data_file, strerror(errno));
             exit(INCORRECT);
          }
+#ifdef HAVE_STATX
+         if (stat_buf.stx_size > 0)
+#else
          if (stat_buf.st_size > 0)
+#endif
          {
 #ifdef HAVE_MMAP
-            if ((ptr = mmap(0, stat_buf.st_size, (PROT_READ | PROT_WRITE),
+            if ((ptr = mmap(0,
+# ifdef HAVE_STATX
+                            stat_buf.stx_size, (PROT_READ | PROT_WRITE),
+# else
+                            stat_buf.st_size, (PROT_READ | PROT_WRITE),
+# endif
                             MAP_SHARED, jd_fd, 0)) == (caddr_t) -1)
 #else
-            if ((ptr = mmap_emu(0, stat_buf.st_size,
+            if ((ptr = mmap_emu(0,
+# ifdef HAVE_STATX
+                                stat_buf.stx_size,
+# else
+                                stat_buf.st_size,
+# endif
                                 (PROT_READ | PROT_WRITE), MAP_SHARED,
                                 job_id_data_file, 0)) == (caddr_t) -1)
 #endif
@@ -1469,7 +1605,11 @@ remove_jobs(int jd_fd, off_t *jid_struct_size, char *job_id_data_file)
             no_of_job_ids = (int *)ptr;
             ptr += AFD_WORD_OFFSET;
             jd = (struct job_id_data *)ptr;
+#ifdef HAVE_STATX
+            *jid_struct_size = stat_buf.stx_size;
+#else
             *jid_struct_size = stat_buf.st_size;
+#endif
          }
          else
          {
@@ -1758,28 +1898,55 @@ remove_jobs(int jd_fd, off_t *jid_struct_size, char *job_id_data_file)
          }
          else
          {
+#ifdef HAVE_STATX
+            struct statx stat_buf;
+#else
             struct stat stat_buf;
+#endif
 
 #ifdef LOCK_DEBUG
             lock_region_w(pwb_fd, 1, __FILE__, __LINE__);
 #else
             lock_region_w(pwb_fd, 1);
 #endif
+#ifdef HAVE_STATX
+            if (statx(pwb_fd, "", AT_STATX_SYNC_AS_STAT | AT_EMPTY_PATH,
+                      STATX_SIZE, &stat_buf) == -1)
+#else
             if (fstat(pwb_fd, &stat_buf) == -1)
+#endif
             {
                system_log(ERROR_SIGN, __FILE__, __LINE__,
+#ifdef HAVE_STATX
+                          "Failed to statx() `%s' : %s",
+#else
                           "Failed to fstat() `%s' : %s",
+#endif
                           pwb_file_name, strerror(errno));
             }
             else
             {
+#ifdef HAVE_STATX
+               if (stat_buf.stx_size > AFD_WORD_OFFSET)
+#else
                if (stat_buf.st_size > AFD_WORD_OFFSET)
+#endif
                {
 #ifdef HAVE_MMAP
-                  if ((ptr = mmap(0, stat_buf.st_size, (PROT_READ | PROT_WRITE),
+                  if ((ptr = mmap(0,
+# ifdef HAVE_STATX
+                                  stat_buf.stx_size, (PROT_READ | PROT_WRITE),
+# else
+                                  stat_buf.st_size, (PROT_READ | PROT_WRITE),
+# endif
                                   MAP_SHARED, pwb_fd, 0)) != (caddr_t) -1)
 #else
-                  if ((ptr = mmap_emu(0, stat_buf.st_size,
+                  if ((ptr = mmap_emu(0,
+# ifdef HAVE_STATX
+                                      stat_buf.stx_size,
+# else
+                                      stat_buf.st_size,
+# endif
                                       (PROT_READ | PROT_WRITE), MAP_SHARED,
                                       pwb_file_name, 0)) != (caddr_t) -1)
 #endif
@@ -1787,7 +1954,11 @@ remove_jobs(int jd_fd, off_t *jid_struct_size, char *job_id_data_file)
                      int               j,
                                        *no_of_passwd,
                                        pw_removed = 0;
+#ifdef HAVE_STATX
+                     size_t            pwb_size = stat_buf.stx_size;
+#else
                      size_t            pwb_size = stat_buf.st_size;
+#endif
                      struct passwd_buf *pwb;
 
                      no_of_passwd = (int *)ptr;
@@ -1820,7 +1991,11 @@ remove_jobs(int jd_fd, off_t *jid_struct_size, char *job_id_data_file)
                         pwb_size = (((*no_of_passwd / PWB_STEP_SIZE) + 1) *
                                    PWB_STEP_SIZE * sizeof(struct passwd_buf)) +
                                    AFD_WORD_OFFSET;
+#ifdef HAVE_STATX
+                        if (pwb_size != stat_buf.stx_size)
+#else
                         if (pwb_size != stat_buf.st_size)
+#endif
                         {
                            if ((ptr = mmap_resize(pwb_fd, ptr,
                                                   pwb_size)) == (caddr_t) -1)
@@ -1856,7 +2031,12 @@ remove_jobs(int jd_fd, off_t *jid_struct_size, char *job_id_data_file)
                {
                   system_log(ERROR_SIGN, __FILE__, __LINE__,
                              "File `%s' is not large enough (%d bytes) to contain any valid data.",
-                             pwb_file_name, stat_buf.st_size);
+#ifdef HAVE_STATX
+                             pwb_file_name, stat_buf.stx_size
+#else
+                             pwb_file_name, stat_buf.st_size
+#endif
+                            );
                }
             }
             if (close(pwb_fd) == -1)
@@ -1889,28 +2069,55 @@ remove_jobs(int jd_fd, off_t *jid_struct_size, char *job_id_data_file)
          }
          else
          {
+#ifdef HAVE_STATX
+            struct statx stat_buf;
+#else
             struct stat stat_buf;
+#endif
 
 #ifdef LOCK_DEBUG
             lock_region_w(dc_id_fd, 0, __FILE__, __LINE__);
 #else
             lock_region_w(dc_id_fd, 0);
 #endif
+#ifdef HAVE_STATX
+            if (statx(dc_id_fd, "", AT_STATX_SYNC_AS_STAT | AT_EMPTY_PATH,
+                      STATX_SIZE, &stat_buf) == -1)
+#else
             if (fstat(dc_id_fd, &stat_buf) == -1)
+#endif
             {
                system_log(ERROR_SIGN, __FILE__, __LINE__,
+#ifdef HAVE_STATX
+                          "Failed to statx() `%s' : %s",
+#else
                           "Failed to fstat() `%s' : %s",
+#endif
                           dc_id_name, strerror(errno));
             }
             else
             {
+#ifdef HAVE_STATX
+               if (stat_buf.stx_size > AFD_WORD_OFFSET)
+#else
                if (stat_buf.st_size > AFD_WORD_OFFSET)
+#endif
                {
 #ifdef HAVE_MMAP
-                  if ((ptr = mmap(0, stat_buf.st_size, (PROT_READ | PROT_WRITE),
+                  if ((ptr = mmap(0,
+# ifdef HAVE_STATX
+                                  stat_buf.stx_size, (PROT_READ | PROT_WRITE),
+# else
+                                  stat_buf.st_size, (PROT_READ | PROT_WRITE),
+# endif
                                   MAP_SHARED, dc_id_fd, 0)) != (caddr_t) -1)
 #else
-                  if ((ptr = mmap_emu(0, stat_buf.st_size,
+                  if ((ptr = mmap_emu(0,
+# ifdef HAVE_STATX
+                                      stat_buf.stx_size,
+# else
+                                      stat_buf.st_size,
+# endif
                                       (PROT_READ | PROT_WRITE), MAP_SHARED,
                                       dc_id_name, 0)) != (caddr_t) -1)
 #endif
@@ -1918,7 +2125,11 @@ remove_jobs(int jd_fd, off_t *jid_struct_size, char *job_id_data_file)
                      int                    j,
                                             *no_of_dc_ids,
                                             dc_removed = 0;
+#ifdef HAVE_STATX
+                     size_t                 dcid_size = stat_buf.stx_size;
+#else
                      size_t                 dcid_size = stat_buf.st_size;
+#endif
                      struct dir_config_list *dcl;
 
                      no_of_dc_ids = (int *)ptr;
@@ -1950,7 +2161,11 @@ remove_jobs(int jd_fd, off_t *jid_struct_size, char *job_id_data_file)
                         /* If necessary resize the password buffer file. */
                         dcid_size = (*no_of_dc_ids * sizeof(struct dir_config_list)) +
                                     AFD_WORD_OFFSET;
+#ifdef HAVE_STATX
+                        if (dcid_size != stat_buf.stx_size)
+#else
                         if (dcid_size != stat_buf.st_size)
+#endif
                         {
                            if ((ptr = mmap_resize(dc_id_fd, ptr,
                                                   dcid_size)) == (caddr_t) -1)
@@ -1986,7 +2201,12 @@ remove_jobs(int jd_fd, off_t *jid_struct_size, char *job_id_data_file)
                {
                   system_log(ERROR_SIGN, __FILE__, __LINE__,
                              "File `%s' is not large enough (%d bytes) to contain any valid data.",
-                             dc_id_name, stat_buf.st_size);
+#ifdef HAVE_STATX
+                             dc_id_name, stat_buf.stx_size
+#else
+                             dc_id_name, stat_buf.st_size
+#endif
+                            );
                }
             }
             if (close(dc_id_fd) == -1)
@@ -2019,28 +2239,55 @@ remove_jobs(int jd_fd, off_t *jid_struct_size, char *job_id_data_file)
          }
          else
          {
+#ifdef HAVE_STATX
+            struct statx stat_buf;
+#else
             struct stat stat_buf;
+#endif
 
 #ifdef LOCK_DEBUG
             lock_region_w(fmd_fd, 0, __FILE__, __LINE__);
 #else
             lock_region_w(fmd_fd, 0);
 #endif
+#ifdef HAVE_STATX
+            if (statx(fmd_fd, "", AT_STATX_SYNC_AS_STAT | AT_EMPTY_PATH,
+                      STATX_SIZE, &stat_buf) == -1)
+#else
             if (fstat(fmd_fd, &stat_buf) == -1)
+#endif
             {
                system_log(ERROR_SIGN, __FILE__, __LINE__,
+#ifdef HAVE_STATX
+                          "Failed to statx() `%s' : %s",
+#else
                           "Failed to fstat() `%s' : %s",
+#endif
                           fmd_file_name, strerror(errno));
             }
             else
             {
+#ifdef HAVE_STATX
+               if (stat_buf.stx_size > AFD_WORD_OFFSET)
+#else
                if (stat_buf.st_size > AFD_WORD_OFFSET)
+#endif
                {
 #ifdef HAVE_MMAP
-                  if ((ptr = mmap(0, stat_buf.st_size, (PROT_READ | PROT_WRITE),
+                  if ((ptr = mmap(0,
+# ifdef HAVE_STATX
+                                  stat_buf.stx_size, (PROT_READ | PROT_WRITE),
+# else
+                                  stat_buf.st_size, (PROT_READ | PROT_WRITE),
+# endif
                                   MAP_SHARED, fmd_fd, 0)) != (caddr_t) -1)
 #else
-                  if ((ptr = mmap_emu(0, stat_buf.st_size,
+                  if ((ptr = mmap_emu(0,
+# ifdef HAVE_STATX
+                                      stat_buf.stx_size,
+# else
+                                      stat_buf.st_size,
+# endif
                                       (PROT_READ | PROT_WRITE), MAP_SHARED,
                                       fmd_file_name, 0)) != (caddr_t) -1)
 #endif
@@ -2050,7 +2297,11 @@ remove_jobs(int jd_fd, off_t *jid_struct_size, char *job_id_data_file)
                             j,
                             mask_offset,
                             *no_of_file_mask_ids;
+#ifdef HAVE_STATX
+                     size_t original_size = stat_buf.stx_size - AFD_WORD_OFFSET,
+#else
                      size_t original_size = stat_buf.st_size - AFD_WORD_OFFSET,
+#endif
                             remove_size,
                             size_removed = 0;
                      char   *fmd;
@@ -2159,7 +2410,12 @@ remove_jobs(int jd_fd, off_t *jid_struct_size, char *job_id_data_file)
                {
                   system_log(ERROR_SIGN, __FILE__, __LINE__,
                              "File `%s' is not large enough (%d bytes) to contain any valid data.",
-                             fmd_file_name, stat_buf.st_size);
+#ifdef HAVE_STATX
+                             fmd_file_name, stat_buf.stx_size
+#else
+                             fmd_file_name, stat_buf.st_size
+#endif
+                            );
                }
             }
             if (close(fmd_fd) == -1)

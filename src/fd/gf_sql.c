@@ -1,6 +1,6 @@
 /*
  *  gf_sql.c - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 2011 - 2021 Holger Kiehl <Holger.Kiehl@dwd.de>
+ *  Copyright (c) 2011 - 2023 Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -966,7 +966,7 @@ main(int argc, char *argv[])
             ((more_files_in_list == YES) ||
              ((db.keep_connected > 0) && (sql_timeup() == SUCCESS))));
 
-   if (db.fsa_pos != INCORRECT)
+   if ((fsa != NULL) && (db.fsa_pos >= 0) && (fsa_pos_save == YES))
    {
       fsa->job_status[(int)db.job_no].connect_status = CLOSING_CONNECTION;
    }
@@ -991,6 +991,11 @@ gf_sql_exit(void)
                 fsa->job_status[(int)db.job_no].no_of_files_done);
       reset_fsa((struct job *)&db, exitflag, files_to_retrieve_shown,
                 file_size_to_retrieve_shown);
+      fsa_detach_pos(db.fsa_pos);
+   }
+   if ((fra != NULL) && (db.fra_pos >= 0) && (p_no_of_dirs != NULL))
+   {
+      fra_detach_pos(db.fra_pos);
    }
 
    send_proc_fin(NO);

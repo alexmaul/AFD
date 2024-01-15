@@ -1,6 +1,6 @@
 /*
  *  sf_loc.c - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 1996 - 2021 Deutscher Wetterdienst (DWD),
+ *  Copyright (c) 1996 - 2023 Deutscher Wetterdienst (DWD),
  *                            Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
@@ -74,6 +74,9 @@ DESCR__E_M1
 #include <stdlib.h>                    /* getenv(), abort()              */
 #include <sys/types.h>
 #include <sys/stat.h>
+#ifdef HAVE_STATX
+# include <sys/sysmacros.h>            /* makedev()                      */
+#endif
 #include <ctype.h>                     /* isalpha()                      */
 #include <utime.h>                     /* utime()                        */
 #include <sys/time.h>                  /* struct timeval                 */
@@ -345,19 +348,50 @@ main(int argc, char *argv[])
       if (((db.special_flag & FORCE_COPY) == 0) &&
           ((db.special_flag & FILE_NAME_IS_HEADER) == 0))
       {
+#ifdef HAVE_STATX
+         struct statx stat_buf;
+#else
          struct stat stat_buf;
+#endif
 
+#ifdef HAVE_STATX
+         if (statx(0, file_path, AT_STATX_SYNC_AS_STAT,
+# ifdef WITH_FAST_MOVE
+             STATX_NLINK,
+# else
+             0,
+# endif
+             &stat_buf) == 0)
+#else
          if (stat(file_path, &stat_buf) == 0)
+#endif
          {
             dev_t ldv;               /* Local device number (file system). */
 
+#ifdef HAVE_STATX
+            ldv = makedev(stat_buf.stx_dev_major, stat_buf.stx_dev_minor);
+#else
             ldv = stat_buf.st_dev;
-#ifdef WITH_FAST_MOVE
-            nlink = stat_buf.st_nlink;
 #endif
+#ifdef WITH_FAST_MOVE
+# ifdef HAVE_STATX
+            nlink = stat_buf.stx_nlink;
+# else
+            nlink = stat_buf.st_nlink;
+# endif
+#endif
+#ifdef HAVE_STATX
+            if (statx(0, db.target_dir, AT_STATX_SYNC_AS_STAT,
+                      0, &stat_buf) == 0)
+#else
             if (stat(db.target_dir, &stat_buf) == 0)
+#endif
             {
+#ifdef HAVE_STATX
+               if (makedev(stat_buf.stx_dev_major, stat_buf.stx_dev_minor) == ldv)
+#else
                if (stat_buf.st_dev == ldv)
+#endif
                {
                   lfs = YES;
                }
@@ -394,9 +428,18 @@ main(int argc, char *argv[])
                                     "Failed to chown() of directory `%s' : %s",
                                     db.target_dir, strerror(errno));
                        }
+#ifdef HAVE_STATX
+                       if (statx(0, db.target_dir, AT_STATX_SYNC_AS_STAT,
+                                 0, &stat_buf) == 0)
+#else
                        if (stat(db.target_dir, &stat_buf) == 0)
+#endif
                        {
+#ifdef HAVE_STATX
+                          if (makedev(stat_buf.stx_dev_major, stat_buf.stx_dev_minor) == ldv)
+#else
                           if (stat_buf.st_dev == ldv)
+#endif
                           {
                              lfs = YES;
                           }
@@ -590,6 +633,71 @@ main(int argc, char *argv[])
             }
             (void)strcpy(p_source_file, p_file_name_buffer);
 
+#ifdef WITH_DUP_CHECK
+# ifndef FAST_SF_DUPCHECK
+            if ((db.dup_check_timeout > 0) &&
+                (isdup(source_file, p_file_name_buffer, *p_file_size_buffer,
+                       db.crc_id, db.dup_check_timeout, db.dup_check_flag, NO,
+#  ifdef HAVE_HW_CRC32
+                       have_hw_crc32,
+#  endif
+                       YES, YES) == YES))
+            {
+               time_t       file_mtime;
+#  ifdef HAVE_STATX
+               struct statx stat_buf;
+#  else
+               struct stat  stat_buf;
+#  endif
+
+               now = time(NULL);
+               if (file_mtime_buffer == NULL)
+               {
+#  ifdef HAVE_STATX
+                  if (statx(0, source_file, AT_STATX_SYNC_AS_STAT,
+                            STATX_MTIME, &stat_buf) == -1)
+#  else
+                  if (stat(source_file, &stat_buf) == -1)
+#  endif
+                  {
+                     file_mtime = now;
+                  }
+                  else
+                  {
+#  ifdef HAVE_STATX
+                     file_mtime = stat_buf.stx_mtime.tv_sec;
+#  else
+                     file_mtime = stat_buf.st_mtime;
+#  endif
+                  }
+               }
+               else
+               {
+                  file_mtime = *p_file_mtime_buffer;
+               }
+               handle_dupcheck_delete(SEND_FILE_LOC, fsa->host_alias,
+                                      source_file, p_file_name_buffer,
+                                      *p_file_size_buffer, file_mtime, now);
+               if (db.dup_check_flag & DC_DELETE)
+               {
+                  local_file_size += *p_file_size_buffer;
+                  local_file_counter += 1;
+                  if (now >= (last_update_time + LOCK_INTERVAL_TIME))
+                  {
+                     last_update_time = now;
+                     update_tfc(local_file_counter, local_file_size,
+                                p_file_size_buffer, files_to_send,
+                                files_send, now);
+                     local_file_size = 0;
+                     local_file_counter = 0;
+                  }
+               }
+            }
+            else
+            {
+# endif
+#endif
+
             /* Write status to FSA? */
             if (gsf_check_fsa(p_db) != NEITHER)
             {
@@ -660,6 +768,8 @@ try_link_again:
                            trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                                      "Failed to unlink() `%s' : %s",
                                      p_to_name, strerror(errno));
+                           rm_dupcheck_crc(source_file, p_file_name_buffer,
+                                           *p_file_size_buffer);
                            exit(MOVE_ERROR);
                         }
                         else
@@ -728,6 +838,9 @@ try_link_again:
                                                       "Failed to unlink() `%s' : %s",
                                                       p_to_name,
                                                       strerror(errno));
+                                            rm_dupcheck_crc(source_file,
+                                                            p_file_name_buffer,
+                                                            *p_file_size_buffer);
                                             exit(MOVE_ERROR);
                                          }
                                          else
@@ -755,6 +868,9 @@ try_link_again:
                                                             source_file,
                                                             p_to_name,
                                                             strerror(errno));
+                                                  rm_dupcheck_crc(source_file,
+                                                                  p_file_name_buffer,
+                                                                  *p_file_size_buffer);
                                                   exit(MOVE_ERROR);
                                                }
                                             }
@@ -775,6 +891,9 @@ try_link_again:
                                                         "Failed to link file `%s' to `%s' : %s",
                                                         source_file, p_to_name,
                                                         strerror(errno));
+                                              rm_dupcheck_crc(source_file,
+                                                              p_file_name_buffer,
+                                                              *p_file_size_buffer);
                                               exit(MOVE_ERROR);
                                            }
                                    }
@@ -824,6 +943,9 @@ try_link_again:
                                      }
                                 if (ret != CREATED_DIR)
                                 {
+                                   rm_dupcheck_crc(source_file,
+                                                   p_file_name_buffer,
+                                                   *p_file_size_buffer);
                                    exit(ret);
                                 }
                              }
@@ -834,6 +956,9 @@ try_link_again:
                                           "Failed to link file `%s' to `%s' : %s",
                                           source_file, p_to_name,
                                           strerror(errno));
+                                rm_dupcheck_crc(source_file,
+                                                p_file_name_buffer,
+                                                *p_file_size_buffer);
                                 exit(MOVE_ERROR);
                              }
                           }
@@ -847,6 +972,8 @@ try_link_again:
                              trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                                        "Failed to link file `%s' to `%s' : %s",
                                        source_file, p_to_name, strerror(errno));
+                             rm_dupcheck_crc(source_file, p_file_name_buffer,
+                                             *p_file_size_buffer);
                              exit(MOVE_ERROR);
                           }
                   }
@@ -872,6 +999,8 @@ cross_link_error:
                   trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                             "Failed to copy file `%s' to `%s'",
                             source_file, p_to_name);
+                  rm_dupcheck_crc(source_file, p_file_name_buffer,
+                                  *p_file_size_buffer);
                   exit(ret);
                }
                else
@@ -1007,6 +1136,8 @@ cross_link_error:
                                  trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                                            "Failed to rename() file `%s' to `%s' : %s",
                                            if_name, ff_name, strerror(errno));
+                                 rm_dupcheck_crc(source_file, p_file_name_buffer,
+                                                 *p_file_size_buffer);
                                  exit(RENAME_ERROR);
                               }
                            }
@@ -1058,12 +1189,17 @@ cross_link_error:
                                                 "Failed to rename() file `%s' to `%s' : %s",
                                                 if_name, ff_name,
                                                 strerror(errno));
+                                      rm_dupcheck_crc(source_file,
+                                                      p_file_name_buffer,
+                                                      *p_file_size_buffer);
                                       exit(RENAME_ERROR);
                                    }
                                 }
                            if ((ret != CREATED_DIR) && (ret != CHOWN_ERROR) &&
                                (ret != SUCCESS))
                            {
+                              rm_dupcheck_crc(source_file, p_file_name_buffer,
+                                              *p_file_size_buffer);
                               exit(ret);
                            }
                         }
@@ -1073,6 +1209,8 @@ cross_link_error:
                            trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                                      "Failed to rename() file `%s' to `%s' : %s",
                                      if_name, ff_name, strerror(errno));
+                           rm_dupcheck_crc(source_file, p_file_name_buffer,
+                                           *p_file_size_buffer);
                            exit(RENAME_ERROR);
                         }
                      }
@@ -1083,20 +1221,36 @@ cross_link_error:
 
                         if (errno == ENOENT)
                         {
-                           int         tmp_errno = errno;
-                           char        tmp_char = *p_ff_name;
-                           struct stat tmp_stat_buf;
+                           int          tmp_errno = errno;
+                           char         tmp_char = *p_ff_name;
+#ifdef HAVE_STATX
+                           struct statx tmp_stat_buf;
+#else
+                           struct stat  tmp_stat_buf;
+#endif
 
                            *p_ff_name = '\0';
+#ifdef HAVE_STATX
+                           if ((statx(0, if_name, AT_STATX_SYNC_AS_STAT,
+                                      0, &tmp_stat_buf) == -1) &&
+                               (errno == ENOENT))
+#else
                            if ((stat(if_name, &tmp_stat_buf) == -1) &&
                                (errno == ENOENT))
+#endif
                            {
                               (void)strcpy(reason_str, "(source missing) ");
                               ret = STILL_FILES_TO_SEND;
                               sign = DEBUG_SIGN;
                            }
+#ifdef HAVE_STATX
+                           else if ((statx(0, ff_name, AT_STATX_SYNC_AS_STAT,
+                                           0, &tmp_stat_buf) == -1) &&
+                                    (errno == ENOENT))
+#else
                            else if ((stat(ff_name, &tmp_stat_buf) == -1) &&
                                     (errno == ENOENT))
+#endif
                                 {
                                    (void)strcpy(reason_str,
                                                 "(destination missing) ");
@@ -1122,6 +1276,8 @@ cross_link_error:
                                   "Failed to rename() file `%s' to `%s' %s: %s",
                                   if_name, ff_name, reason_str,
                                   strerror(errno));
+                        rm_dupcheck_crc(source_file, p_file_name_buffer,
+                                        *p_file_size_buffer);
                         exit(ret);
                      }
                   }
@@ -1461,6 +1617,11 @@ try_again_unlink:
                                transfer_log_fd);
                }
             }
+#ifdef WITH_DUP_CHECK
+# ifndef FAST_SF_DUPCHECK
+            }
+# endif
+#endif
 
             p_file_name_buffer += MAX_FILENAME_LENGTH;
             p_file_size_buffer++;
@@ -2107,6 +2268,7 @@ sf_loc_exit(void)
                    buffer, db.id.job);
       }
       reset_fsa((struct job *)&db, exitflag, 0, 0);
+      fsa_detach_pos(db.fsa_pos);
    }
 
    free(file_name_buffer);
@@ -2148,7 +2310,8 @@ static void
 sig_kill(int signo)
 {
    exitflag = 0;
-   if (fsa->job_status[(int)db.job_no].unique_name[2] == 5)
+   if ((fsa != NULL) && (fsa_pos_save == YES) &&
+       (fsa->job_status[(int)db.job_no].unique_name[2] == 5))
    {
       exit(SUCCESS);
    }

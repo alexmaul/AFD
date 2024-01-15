@@ -1,6 +1,6 @@
 /*
  *  sf_smtp.c - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 1996 - 2022 Holger Kiehl <Holger.Kiehl@dwd.de>
+ *  Copyright (c) 1996 - 2023 Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -129,11 +129,8 @@ int                        counter_fd = -1,
 #ifdef _MAINTAINER_LOG
                            maintainer_log_fd = STDERR_FILENO,
 #endif
-                           no_of_dirs,
                            no_of_hosts,   /* This variable is not used   */
                                           /* in this module.             */
-                           fra_fd = -1,
-                           fra_id,
                            fsa_fd = -1,
                            fsa_id,
                            fsa_pos_save = NO,
@@ -188,8 +185,7 @@ size_t                     demcd_size,
 unsigned int               burst_2_counter = 0;
 #endif
 #ifdef HAVE_MMAP
-off_t                      fra_size,
-                           fsa_size;
+off_t                      fsa_size;
 #endif
 off_t                      *file_size_buffer = NULL;
 time_t                     *file_mtime_buffer = NULL;
@@ -200,7 +196,6 @@ char                       *p_work_dir = NULL,
                            tr_hostname[MAX_HOSTNAME_LENGTH + 2],
                            *del_file_name_buffer = NULL, /* NOT USED. */
                            *file_name_buffer = NULL;
-struct fileretrieve_status *fra = NULL;
 struct filetransfer_status *fsa = NULL;
 struct job                 db;
 struct rule                *rule;
@@ -259,6 +254,7 @@ main(int argc, char *argv[])
                     diff_time,
 #endif
                     end_transfer_time_file,
+                    *p_file_mtime_buffer,
                     start_transfer_time_file = 0,
                     last_update_time,
                     now;
@@ -284,7 +280,11 @@ main(int argc, char *argv[])
 #endif
                     *mail_header_buffer = NULL;
    clock_t          clktck;
+#ifdef HAVE_STATX
+   struct statx     stat_buf;
+#else
    struct stat      stat_buf;
+#endif
    struct job       *p_db;
 #ifdef SA_FULLDUMP
    struct sigaction sact;
@@ -924,26 +924,45 @@ main(int argc, char *argv[])
          }
          else
          {
-            struct stat stat_buf;
-
+#ifdef HAVE_STATX
+            if (statx(mail_fd, "", AT_STATX_SYNC_AS_STAT | AT_EMPTY_PATH,
+                      STATX_SIZE, &stat_buf) == -1)
+#else
             if (fstat(mail_fd, &stat_buf) == -1)
+#endif
             {
                system_log(WARN_SIGN, __FILE__, __LINE__,
+#ifdef HAVE_STATX
+                          "Failed to statx() mail header file %s : %s",
+#else
                           "Failed to fstat() mail header file %s : %s",
+#endif
                           mail_header_file, strerror(errno));
             }
             else
             {
+#ifdef HAVE_STATX
+               if (stat_buf.stx_size == 0)
+#else
                if (stat_buf.st_size == 0)
+#endif
                {
                   trans_log(WARN_SIGN, __FILE__, __LINE__, NULL, NULL,
                             "mail header file %s is empty.");
                }
                else
                {
+#ifdef HAVE_STATX
+                  if (stat_buf.stx_size <= 204800)
+#else
                   if (stat_buf.st_size <= 204800)
+#endif
                   {
+#ifdef HAVE_STATX
+                     if ((mail_header_buffer = malloc(stat_buf.stx_size + 1)) == NULL)
+#else
                      if ((mail_header_buffer = malloc(stat_buf.st_size + 1)) == NULL)
+#endif
                      {
                         system_log(WARN_SIGN, __FILE__, __LINE__,
                                    "Failed to malloc() buffer for mail header file : %s",
@@ -951,7 +970,11 @@ main(int argc, char *argv[])
                      }
                      else
                      {
+#ifdef HAVE_STATX
+                        if ((extra_mail_header_buffer = malloc(((2 * stat_buf.stx_size) + 1))) == NULL)
+#else
                         if ((extra_mail_header_buffer = malloc(((2 * stat_buf.st_size) + 1))) == NULL)
+#endif
                         {
                            system_log(WARN_SIGN, __FILE__, __LINE__,
                                       "Failed to malloc() buffer for mail header file : %s",
@@ -961,9 +984,15 @@ main(int argc, char *argv[])
                         }
                         else
                         {
+#ifdef HAVE_STATX
+                           mail_header_size = stat_buf.stx_size;
+                           if (read(mail_fd, mail_header_buffer,
+                                    mail_header_size) != stat_buf.stx_size)
+#else
                            mail_header_size = stat_buf.st_size;
                            if (read(mail_fd, mail_header_buffer,
                                     mail_header_size) != stat_buf.st_size)
+#endif
                            {
                               system_log(WARN_SIGN, __FILE__, __LINE__,
                                          "Failed to read() mail header file %s : %s",
@@ -1001,7 +1030,12 @@ main(int argc, char *argv[])
                                 "Mail header file %s to large (%lld bytes). Allowed are 204800 bytes.",
 #endif
                                 mail_header_file,
-                                (pri_off_t)stat_buf.st_size);
+#ifdef HAVE_STATX
+                                (pri_off_t)stat_buf.stx_size
+#else
+                                (pri_off_t)stat_buf.st_size
+#endif
+                               );
                   }
                }
             }
@@ -1028,6 +1062,7 @@ main(int argc, char *argv[])
       /* Send all files. */
       p_file_name_buffer = file_name_buffer;
       p_file_size_buffer = file_size_buffer;
+      p_file_mtime_buffer = file_mtime_buffer;
       last_update_time = time(NULL);
       local_file_size = 0;
       for (files_send = 0; files_send < files_to_send; files_send++)
@@ -1328,6 +1363,71 @@ main(int argc, char *argv[])
          (void)snprintf(fullname, MAX_PATH_LENGTH + 1,
                         "%s/%s", file_path, p_file_name_buffer);
 
+#ifdef WITH_DUP_CHECK
+# ifndef FAST_SF_DUPCHECK
+         if ((db.dup_check_timeout > 0) &&
+             (isdup(fullname, p_file_name_buffer, *p_file_size_buffer,
+                    db.crc_id, db.dup_check_timeout, db.dup_check_flag, NO,
+#  ifdef HAVE_HW_CRC32
+                    have_hw_crc32,
+#  endif
+                    YES, YES) == YES))
+         {
+            time_t       file_mtime;
+#  ifdef HAVE_STATX
+            struct statx stat_buf;
+#  else
+            struct stat  stat_buf;
+#  endif
+
+            now = time(NULL);
+            if (file_mtime_buffer == NULL)
+            {
+#  ifdef HAVE_STATX
+               if (statx(0, fullname, AT_STATX_SYNC_AS_STAT,
+                         STATX_MTIME, &stat_buf) == -1)
+#  else
+               if (stat(fullname, &stat_buf) == -1)
+#  endif
+               {
+                  file_mtime = now;
+               }
+               else
+               {
+#  ifdef HAVE_STATX
+                  file_mtime = stat_buf.stx_mtime.tv_sec;
+#  else
+                  file_mtime = stat_buf.st_mtime;
+#  endif
+               }
+            }
+            else
+            {
+               file_mtime = *p_file_mtime_buffer;
+            }
+            handle_dupcheck_delete(SEND_FILE_SMTP, fsa->host_alias, fullname,
+                                   p_file_name_buffer, *p_file_size_buffer,
+                                   file_mtime, now);
+            if (db.dup_check_flag & DC_DELETE)
+            {
+               local_file_size += *p_file_size_buffer;
+               local_file_counter += 1;
+               if (now >= (last_update_time + LOCK_INTERVAL_TIME))
+               {
+                  last_update_time = now;
+                  update_tfc(local_file_counter, local_file_size,
+                             p_file_size_buffer, files_to_send,
+                             files_send, now);
+                  local_file_size = 0;
+                  local_file_counter = 0;
+               }
+            }
+         }
+         else
+         {
+# endif        
+#endif
+
          /* Open local file. */
 #ifdef O_LARGEFILE
          if ((fd = open(fullname, O_RDONLY | O_LARGEFILE)) < 0)
@@ -1338,6 +1438,7 @@ main(int argc, char *argv[])
             trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                       "Failed to open() local file `%s' : %s",
                       fullname, strerror(errno));
+            rm_dupcheck_crc(fullname, p_file_name_buffer, *p_file_size_buffer);
             (void)smtp_close();
             (void)smtp_quit();
             exit(OPEN_LOCAL_ERROR);
@@ -1391,6 +1492,10 @@ main(int argc, char *argv[])
             {
                trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                          "Failed to store Date with strftime().");
+               rm_dupcheck_crc(fullname, p_file_name_buffer,
+                               *p_file_size_buffer);
+               rm_dupcheck_crc(fullname, p_file_name_buffer,
+                               *p_file_size_buffer);
                (void)smtp_quit();
                exit(ALLOC_ERROR);
             }
@@ -1398,6 +1503,8 @@ main(int argc, char *argv[])
             {
                trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                          "Failed to write Date to SMTP-server.");
+               rm_dupcheck_crc(fullname, p_file_name_buffer,
+                               *p_file_size_buffer);
                (void)smtp_quit();
                exit(eval_timeout(WRITE_REMOTE_ERROR));
             }
@@ -1411,6 +1518,8 @@ main(int argc, char *argv[])
                {
                   trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                             "Buffer length for mail header to small!");
+                  rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                  *p_file_size_buffer);
                   (void)smtp_quit();
                   exit(ALLOC_ERROR);
                }
@@ -1418,6 +1527,8 @@ main(int argc, char *argv[])
                {
                   trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                             "Failed to write From to SMTP-server.");
+                  rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                  *p_file_size_buffer);
                   (void)smtp_quit();
                   exit(eval_timeout(WRITE_REMOTE_ERROR));
                }
@@ -1432,6 +1543,8 @@ main(int argc, char *argv[])
                {
                   trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                             "Buffer length for mail header to small!");
+                  rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                  *p_file_size_buffer);
                   (void)smtp_quit();
                   exit(ALLOC_ERROR);
                }
@@ -1439,6 +1552,8 @@ main(int argc, char *argv[])
                {
                   trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                             "Failed to write Reply-To to SMTP-server.");
+                  rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                  *p_file_size_buffer);
                   (void)smtp_quit();
                   exit(eval_timeout(WRITE_REMOTE_ERROR));
                }
@@ -1456,6 +1571,8 @@ main(int argc, char *argv[])
                {
                   trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                             "Buffer length for Message-ID to small!");
+                  rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                  *p_file_size_buffer);
                   (void)smtp_quit();
                   exit(ALLOC_ERROR);
                }
@@ -1463,6 +1580,8 @@ main(int argc, char *argv[])
                {
                   trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                             "Failed to write Message-ID to SMTP-server.");
+                  rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                  *p_file_size_buffer);
                   (void)smtp_quit();
                   exit(eval_timeout(WRITE_REMOTE_ERROR));
                }
@@ -1476,6 +1595,8 @@ main(int argc, char *argv[])
                {
                   trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                             "Buffer length for de-mail header to small!");
+                  rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                  *p_file_size_buffer);
                   (void)smtp_quit();
                   exit(ALLOC_ERROR);
                }
@@ -1483,6 +1604,8 @@ main(int argc, char *argv[])
                {
                   trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                             "Failed to write de-mail header to SMTP-server.");
+                  rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                  *p_file_size_buffer);
                   (void)smtp_quit();
                   exit(eval_timeout(WRITE_REMOTE_ERROR));
                }
@@ -1496,6 +1619,8 @@ main(int argc, char *argv[])
                   {
                      trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                                "Buffer length for de-mail header to small!");
+                     rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                     *p_file_size_buffer);
                      (void)smtp_quit();
                      exit(ALLOC_ERROR);
                   }
@@ -1503,6 +1628,8 @@ main(int argc, char *argv[])
                   {
                      trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                                "Failed to write de-mail header to SMTP-server.");
+                     rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                     *p_file_size_buffer);
                      (void)smtp_quit();
                      exit(eval_timeout(WRITE_REMOTE_ERROR));
                   }
@@ -1517,6 +1644,8 @@ main(int argc, char *argv[])
                   {
                      trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                                "Buffer length for de-mail confirmation-of-receipt to small!");
+                     rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                     *p_file_size_buffer);
                      (void)smtp_quit();
                      exit(ALLOC_ERROR);
                   }
@@ -1524,6 +1653,8 @@ main(int argc, char *argv[])
                   {
                      trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                                "Failed to write de-mail confirmation-of-receipt to SMTP-server.");
+                     rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                     *p_file_size_buffer);
                      (void)smtp_quit();
                      exit(eval_timeout(WRITE_REMOTE_ERROR));
                   }
@@ -1538,6 +1669,8 @@ main(int argc, char *argv[])
                   {
                      trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                                "Buffer length for de-mail confirmation-of-retrieve to small!");
+                     rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                     *p_file_size_buffer);
                      (void)smtp_quit();
                      exit(ALLOC_ERROR);
                   }
@@ -1545,6 +1678,8 @@ main(int argc, char *argv[])
                   {
                      trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                                "Failed to write de-mail confirmation-of-retrieve to SMTP-server.");
+                     rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                     *p_file_size_buffer);
                      (void)smtp_quit();
                      exit(eval_timeout(WRITE_REMOTE_ERROR));
                   }
@@ -1563,6 +1698,8 @@ main(int argc, char *argv[])
                   {
                      trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                                "Buffer length for mail header to small!");
+                     rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                     *p_file_size_buffer);
                      (void)smtp_quit();
                      exit(ALLOC_ERROR);
                   }
@@ -1575,6 +1712,8 @@ main(int argc, char *argv[])
                   {
                      trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                                "Buffer length for mail header to small!");
+                     rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                     *p_file_size_buffer);
                      (void)smtp_quit();
                      exit(ALLOC_ERROR);
                   }
@@ -1588,6 +1727,8 @@ main(int argc, char *argv[])
                         {
                            trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                                      "Buffer length for mail header to small!");
+                           rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                           *p_file_size_buffer);
                            (void)smtp_quit();
                            exit(ALLOC_ERROR);
                         }
@@ -1625,6 +1766,8 @@ main(int argc, char *argv[])
                         {
                            trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                                      "Buffer length for mail header to small!");
+                           rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                           *p_file_size_buffer);
                            (void)smtp_quit();
                            exit(ALLOC_ERROR);
                         }
@@ -1651,6 +1794,8 @@ main(int argc, char *argv[])
                               {
                                  trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                                            "Buffer length for mail header to small!");
+                                 rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                                 *p_file_size_buffer);
                                  (void)smtp_quit();
                                  exit(ALLOC_ERROR);
                               }
@@ -1693,6 +1838,8 @@ main(int argc, char *argv[])
                               {
                                  trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                                            "Buffer length for mail header to small!");
+                                 rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                                 *p_file_size_buffer);
                                  (void)smtp_quit();
                                  exit(ALLOC_ERROR);
                               }
@@ -1715,6 +1862,8 @@ main(int argc, char *argv[])
                         {
                            trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                                      "Buffer length for mail header to small!");
+                           rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                           *p_file_size_buffer);
                            (void)smtp_quit();
                            exit(ALLOC_ERROR);
                         }
@@ -1726,6 +1875,8 @@ main(int argc, char *argv[])
                {
                   trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                             "Failed to write subject to SMTP-server.");
+                  rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                  *p_file_size_buffer);
                   (void)smtp_quit();
                   exit(eval_timeout(WRITE_REMOTE_ERROR));
                }
@@ -1738,6 +1889,8 @@ main(int argc, char *argv[])
                     {
                        trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                                  "Failed to write the filename as subject to SMTP-server.");
+                       rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                       *p_file_size_buffer);
                        (void)smtp_quit();
                        exit(eval_timeout(WRITE_REMOTE_ERROR));
                     }
@@ -1752,6 +1905,8 @@ main(int argc, char *argv[])
                {
                   trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                             "Buffer length for mail header to small!");
+                  rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                  *p_file_size_buffer);
                   (void)smtp_quit();
                   exit(ALLOC_ERROR);
                }
@@ -1812,6 +1967,8 @@ main(int argc, char *argv[])
                   {
                      trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                                "Buffer length for mail header to small!");
+                     rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                     *p_file_size_buffer);
                      (void)smtp_quit();
                      exit(ALLOC_ERROR);
                   }
@@ -1839,6 +1996,8 @@ main(int argc, char *argv[])
                         trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                                   "Failed to realloc() %d bytes : %s",
                                   buffer_size, strerror(errno));
+                        rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                        *p_file_size_buffer);
                         (void)smtp_quit();
                         exit(ALLOC_ERROR);
                      }
@@ -1858,6 +2017,8 @@ main(int argc, char *argv[])
                         trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                                   "Buffer length for mail header to small (%d)!",
                                   buffer_size);
+                        rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                        *p_file_size_buffer);
                         (void)smtp_quit();
                         exit(ALLOC_ERROR);
                      }
@@ -1872,6 +2033,8 @@ main(int argc, char *argv[])
                            trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                                      "Failed to realloc() %d bytes : %s",
                                      buffer_size, strerror(errno));
+                           rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                           *p_file_size_buffer);
                            (void)smtp_quit();
                            exit(ALLOC_ERROR);
                         }
@@ -1883,6 +2046,8 @@ main(int argc, char *argv[])
                         trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                                   "Buffer length for mail header to small (%d)!",
                                   buffer_size);
+                        rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                        *p_file_size_buffer);
                         (void)smtp_quit();
                         exit(ALLOC_ERROR);
                      }
@@ -1895,6 +2060,8 @@ main(int argc, char *argv[])
                         trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                                   "Failed to realloc() %d bytes : %s",
                                   buffer_size, strerror(errno));
+                        rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                        *p_file_size_buffer);
                         (void)smtp_quit();
                         exit(ALLOC_ERROR);
                      }
@@ -1910,6 +2077,8 @@ main(int argc, char *argv[])
                {
                   trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                             "Failed to write To header to SMTP-server.");
+                  rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                  *p_file_size_buffer);
                   (void)smtp_quit();
                   exit(eval_timeout(WRITE_REMOTE_ERROR));
                }
@@ -1929,6 +2098,8 @@ main(int argc, char *argv[])
                      trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                                "Buffer length for mail header to small (%d)!",
                                buffer_size);
+                     rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                     *p_file_size_buffer);
                      (void)smtp_quit();
                      exit(ALLOC_ERROR);
                   }
@@ -1982,6 +2153,8 @@ main(int argc, char *argv[])
                      trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                                "Buffer length for mail header to small (%d)!",
                                buffer_size);
+                     rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                     *p_file_size_buffer);
                      (void)smtp_quit();
                      exit(ALLOC_ERROR);
                   }
@@ -1993,6 +2166,8 @@ main(int argc, char *argv[])
                {
                   trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                             "Failed to write start of multipart boundary to SMTP-server.");
+                  rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                  *p_file_size_buffer);
                   (void)smtp_quit();
                   exit(eval_timeout(WRITE_REMOTE_ERROR));
                }
@@ -2004,20 +2179,24 @@ main(int argc, char *argv[])
                                       "MIME-Version: 1.0 (produced by AFD %s)\r\nContent-Type: TEXT/plain; charset=%s\r\nContent-Transfer-Encoding: 8BIT\r\n",
                                       PACKAGE_VERSION,
                                       (db.charset == NULL) ? db.default_charset : db.charset);
-                     if (length >= buffer_size)
-                     {
-                        trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
-                                  "Buffer length for mail header to small (%d)!",
-                                  buffer_size);
-                        (void)smtp_quit();
-                        exit(ALLOC_ERROR);
-                     }
-                     added_content_type = YES;
+                    if (length >= buffer_size)
+                    {
+                       trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
+                                 "Buffer length for mail header to small (%d)!",
+                                 buffer_size);
+                       rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                       *p_file_size_buffer);
+                       (void)smtp_quit();
+                       exit(ALLOC_ERROR);
+                    }
+                    added_content_type = YES;
 
                     if (smtp_write(buffer, NULL, length) < 0)
                     {
                        trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                                  "Failed to write MIME header with charset to SMTP-server.");
+                       rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                       *p_file_size_buffer);
                        (void)smtp_quit();
                        exit(eval_timeout(WRITE_REMOTE_ERROR));
                     }
@@ -2050,6 +2229,8 @@ main(int argc, char *argv[])
                      trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                                "Buffer length for mail header to small (%d)!",
                                encode_buffer_size);
+                     rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                     *p_file_size_buffer);
                      (void)smtp_quit();
                      exit(ALLOC_ERROR);
                   }
@@ -2059,6 +2240,8 @@ main(int argc, char *argv[])
                   {
                      trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                                "Failed to write the Content-Type (TEXT/plain) to SMTP-server.");
+                     rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                     *p_file_size_buffer);
                      (void)smtp_quit();
                      exit(eval_timeout(WRITE_REMOTE_ERROR));
                   }
@@ -2075,6 +2258,8 @@ main(int argc, char *argv[])
                   {
                      trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                                "Failed to write the mail header content to SMTP-server.");
+                     rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                     *p_file_size_buffer);
                      (void)smtp_quit();
                      exit(eval_timeout(WRITE_REMOTE_ERROR));
                   }
@@ -2086,6 +2271,8 @@ main(int argc, char *argv[])
                   {
                      trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                                "Failed to write the mail header content to SMTP-server.");
+                     rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                     *p_file_size_buffer);
                      (void)smtp_quit();
                      exit(eval_timeout(WRITE_REMOTE_ERROR));
                   }
@@ -2142,6 +2329,8 @@ main(int argc, char *argv[])
                      trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                                "Buffer length for mail header to small (%d)!",
                                encode_buffer_size);
+                     rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                     *p_file_size_buffer);
                      (void)smtp_quit();
                      exit(ALLOC_ERROR);
                   }
@@ -2150,6 +2339,8 @@ main(int argc, char *argv[])
                   {
                      trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                                "Failed to write the Content-Type to SMTP-server.");
+                     rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                     *p_file_size_buffer);
                      (void)smtp_quit();
                      exit(eval_timeout(WRITE_REMOTE_ERROR));
                   }
@@ -2205,6 +2396,8 @@ main(int argc, char *argv[])
 #endif
                                  (pri_size_t)length,
                                  (14 + MAX_CONTENT_TYPE_LENGTH + 2 + 1));
+                        rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                        *p_file_size_buffer);
                        (void)smtp_quit();
                        exit(ALLOC_ERROR);
                     }
@@ -2213,6 +2406,8 @@ main(int argc, char *argv[])
                     {
                        trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                                  "Failed to write the Content-Type to SMTP-server.");
+                        rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                        *p_file_size_buffer);
                        (void)smtp_quit();
                        exit(eval_timeout(WRITE_REMOTE_ERROR));
                     }
@@ -2227,6 +2422,8 @@ main(int argc, char *argv[])
                trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                          "Buffer length for mail header to small (%d)!",
                          buffer_size);
+               rm_dupcheck_crc(fullname, p_file_name_buffer,
+                               *p_file_size_buffer);
                (void)smtp_quit();
                exit(ALLOC_ERROR);
             }
@@ -2234,6 +2431,8 @@ main(int argc, char *argv[])
             {
                trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                          "Failed to write Reply-To to SMTP-server.");
+               rm_dupcheck_crc(fullname, p_file_name_buffer,
+                               *p_file_size_buffer);
                (void)smtp_quit();
                exit(eval_timeout(WRITE_REMOTE_ERROR));
             }
@@ -2248,6 +2447,8 @@ main(int argc, char *argv[])
             {
                trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                          "Failed to write second CRLF to indicate end of header.");
+               rm_dupcheck_crc(fullname, p_file_name_buffer,
+                               *p_file_size_buffer);
                (void)smtp_quit();
                exit(eval_timeout(WRITE_REMOTE_ERROR));
             }
@@ -2355,6 +2556,8 @@ main(int argc, char *argv[])
                trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                          "Buffer length for mail header to small (%d)!",
                          buffer_size);
+               rm_dupcheck_crc(fullname, p_file_name_buffer,
+                               *p_file_size_buffer);
                (void)smtp_quit();
                exit(ALLOC_ERROR);
             }
@@ -2363,6 +2566,8 @@ main(int argc, char *argv[])
             {
                trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                          "Failed to write the Content-Type to SMTP-server.");
+               rm_dupcheck_crc(fullname, p_file_name_buffer,
+                               *p_file_size_buffer);
                (void)smtp_quit();
                exit(eval_timeout(WRITE_REMOTE_ERROR));
             }
@@ -2395,18 +2600,24 @@ main(int argc, char *argv[])
                   trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                             "Failed to read() %s : %s",
                             fullname, strerror(errno));
+                  rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                  *p_file_size_buffer);
                   (void)smtp_close();
                   (void)smtp_quit();
                   exit(READ_LOCAL_ERROR);
                }
                if (db.special_flag & ATTACH_FILE)
                {
-                  write_size = encode_base64((unsigned char *)buffer, blocksize,
-                                             (unsigned char *)encode_buffer);
+                  write_size = encode_base64((unsigned char *)buffer,
+                                             blocksize,
+                                             (unsigned char *)encode_buffer,
+                                             YES);
                   if (smtp_write(encode_buffer, NULL, write_size) < 0)
                   {
                      trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                                "Failed to write data from the source file to the SMTP-server.");
+                     rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                     *p_file_size_buffer);
                      (void)smtp_quit();
                      exit(eval_timeout(WRITE_REMOTE_ERROR));
                   }
@@ -2419,6 +2630,8 @@ main(int argc, char *argv[])
                      {
                         trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                                   "Failed to write data from the source file to the SMTP-server.");
+                        rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                        *p_file_size_buffer);
                         (void)smtp_quit();
                         exit(eval_timeout(WRITE_REMOTE_ERROR));
                      }
@@ -2429,6 +2642,8 @@ main(int argc, char *argv[])
                      {
                         trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                                   "Failed to write data from the source file to the SMTP-server.");
+                        rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                        *p_file_size_buffer);
                         (void)smtp_quit();
                         exit(eval_timeout(WRITE_REMOTE_ERROR));
                      }
@@ -2466,6 +2681,8 @@ main(int argc, char *argv[])
 #endif
                                      fsa->job_status[(int)db.job_no].file_name_in_use,
                                      (pri_time_t)(end_transfer_time_file - start_transfer_time_file));
+                           rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                           *p_file_size_buffer);
                            (void)smtp_quit();
                            exitflag = 0;
                            exit(STILL_FILES_TO_SEND);
@@ -2481,6 +2698,8 @@ main(int argc, char *argv[])
                   trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                             "Failed to read() rest from %s : %s",
                             fullname, strerror(errno));
+                  rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                  *p_file_size_buffer);
                   (void)smtp_close();
                   (void)smtp_quit();
                   exit(READ_LOCAL_ERROR);
@@ -2488,11 +2707,14 @@ main(int argc, char *argv[])
                if (db.special_flag & ATTACH_FILE)
                {
                   write_size = encode_base64((unsigned char *)buffer, rest,
-                                             (unsigned char *)encode_buffer);
+                                             (unsigned char *)encode_buffer,
+                                             YES);
                   if (smtp_write(encode_buffer, NULL, write_size) < 0)
                   {
                      trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                                "Failed to write the rest data from the source file to the SMTP-server.");
+                     rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                     *p_file_size_buffer);
                      (void)smtp_quit();
                      exit(eval_timeout(WRITE_REMOTE_ERROR));
                   }
@@ -2505,6 +2727,8 @@ main(int argc, char *argv[])
                      {
                         trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                                   "Failed to write the rest data from the source file to the SMTP-server.");
+                        rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                        *p_file_size_buffer);
                         (void)smtp_quit();
                         exit(eval_timeout(WRITE_REMOTE_ERROR));
                      }
@@ -2515,6 +2739,8 @@ main(int argc, char *argv[])
                      {
                         trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                                   "Failed to write the rest data from the source file to the SMTP-server.");
+                        rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                        *p_file_size_buffer);
                         (void)smtp_quit();
                         exit(eval_timeout(WRITE_REMOTE_ERROR));
                      }
@@ -2545,31 +2771,50 @@ main(int argc, char *argv[])
              * NOTE: This is NOT a fool proof way. There must be a better
              *       way!
              */
+#ifdef HAVE_STATX
+            if (statx(fd, "", AT_STATX_SYNC_AS_STAT | AT_EMPTY_PATH,
+                      STATX_SIZE, &stat_buf) == -1)
+#else
             if (fstat(fd, &stat_buf) == -1)
+#endif
             {
                (void)rec(transfer_log_fd, DEBUG_SIGN,
-                         "Hmmm. Failed to stat() %s : %s (%s %d)\n",
+#ifdef HAVE_STATX
+                         "Hmmm. Failed to statx() %s : %s (%s %d)\n",
+#else
+                         "Hmmm. Failed to fstat() %s : %s (%s %d)\n",
+#endif
                          fullname, strerror(errno), __FILE__, __LINE__);
                break;
             }
             else
             {
+#ifdef HAVE_STATX
+               if (stat_buf.stx_size > *p_file_size_buffer)
+#else
                if (stat_buf.st_size > *p_file_size_buffer)
+#endif
                {
-                  char sign[LOG_SIGN_LENGTH];
+                  char *sign;
 
                   if (db.special_flag & SILENT_NOT_LOCKED_FILE)
                   {
-                     (void)memcpy(sign, DEBUG_SIGN, LOG_SIGN_LENGTH);
+                     sign = DEBUG_SIGN;
                   }
                   else
                   {
-                     (void)memcpy(sign, WARN_SIGN, LOG_SIGN_LENGTH);
+                     sign = WARN_SIGN;
                   }
 
+#ifdef HAVE_STATX
+                  loops = (stat_buf.stx_size - *p_file_size_buffer) / blocksize;
+                  rest = (stat_buf.stx_size - *p_file_size_buffer) % blocksize;
+                  *p_file_size_buffer = stat_buf.stx_size;
+#else
                   loops = (stat_buf.st_size - *p_file_size_buffer) / blocksize;
                   rest = (stat_buf.st_size - *p_file_size_buffer) % blocksize;
                   *p_file_size_buffer = stat_buf.st_size;
+#endif
 
                   /*
                    * Give a warning in the receive log, so some action
@@ -2601,6 +2846,8 @@ main(int argc, char *argv[])
                   trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                             "Buffer length for mail header to small (%d)!",
                             buffer_size);
+                  rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                  *p_file_size_buffer);
                   (void)smtp_quit();
                   exit(ALLOC_ERROR);
                }
@@ -2608,6 +2855,8 @@ main(int argc, char *argv[])
                {
                   trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                             "Failed to write end of multipart boundary to SMTP-server.");
+                  rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                  *p_file_size_buffer);
                   (void)smtp_quit();
                   exit(eval_timeout(WRITE_REMOTE_ERROR));
                }
@@ -2627,8 +2876,8 @@ main(int argc, char *argv[])
          if (close(fd) == -1)
          {
             (void)rec(transfer_log_fd, WARN_SIGN,
-                      "%-*s[%d]: Failed to close() local file %s : %s (%s %d)\n",
-                      MAX_HOSTNAME_LENGTH, tr_hostname, (int)db.job_no,
+                      "%-*s[%c]: Failed to close() local file %s : %s (%s %d)\n",
+                      MAX_HOSTNAME_LENGTH, tr_hostname, db.job_no + '0',
                       final_filename, strerror(errno), __FILE__, __LINE__);
             /*
              * Since we usually do not send more then 100 files and
@@ -2645,6 +2894,8 @@ main(int argc, char *argv[])
             {
                trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, msg_str,
                          "Failed to close data mode (%d).", status);
+               rm_dupcheck_crc(fullname, p_file_name_buffer,
+                               *p_file_size_buffer);
                (void)smtp_quit();
                exit(eval_timeout(CLOSE_REMOTE_ERROR));
             }
@@ -3035,9 +3286,18 @@ try_again_unlink:
                             transfer_log_fd);
             }
          }
+#ifdef WITH_DUP_CHECK
+# ifndef FAST_SF_DUPCHECK
+         }
+# endif
+#endif
 
          p_file_name_buffer += MAX_FILENAME_LENGTH;
          p_file_size_buffer++;
+         if (file_mtime_buffer != NULL)
+         {
+            p_file_mtime_buffer++;
+         }
       } /* for (files_send = 0; files_send < files_to_send; files_send++) */
 
 #ifdef WITH_ARCHIVE_COPY_INFO
@@ -3303,6 +3563,7 @@ sf_smtp_exit(void)
                    buffer, db.id.job);
       }
       reset_fsa((struct job *)&db, exitflag, 0, 0);
+      fsa_detach_pos(db.fsa_pos);
    }
 
    free(file_name_buffer);
@@ -3344,7 +3605,8 @@ static void
 sig_kill(int signo)
 {
    exitflag = 0;
-   if (fsa->job_status[(int)db.job_no].unique_name[2] == 5)
+   if ((fsa != NULL) && (fsa_pos_save == YES) &&
+       (fsa->job_status[(int)db.job_no].unique_name[2] == 5))
    {
       exit(SUCCESS);
    }

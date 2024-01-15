@@ -1,6 +1,6 @@
 /*
  *  gf_exec.c - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 2013 - 2022 Deutscher Wetterdienst (DWD),
+ *  Copyright (c) 2013 - 2024 Deutscher Wetterdienst (DWD),
  *                            Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
@@ -45,6 +45,7 @@ DESCR__S_M1
  **
  ** HISTORY
  **   23.01.2013 H.Kiehl Created
+ **   14.01.2024 H.Kiehl Add more debug log information.
  **
  */
 DESCR__E_M1
@@ -144,7 +145,11 @@ main(int argc, char *argv[])
                     str_crc_val[MAX_INT_HEX_LENGTH];
    DIR              *dp;
    struct dirent    *p_dir;
+#ifdef HAVE_STATX
+   struct statx     stat_buf;
+#else
    struct stat      stat_buf;
+#endif
 #ifdef SA_FULLDUMP
    struct sigaction sact;
 #endif
@@ -375,6 +380,36 @@ main(int argc, char *argv[])
          }
          exit(EXEC_ERROR);
       }
+      else
+      {
+         if (fsa->debug > NORMAL_MODE)
+         {
+            trans_db_log(INFO_SIGN, __FILE__, __LINE__, NULL,
+                         "Execute command %s [Return code = %d]",
+                         command_str, ret);
+            if ((return_str != NULL) && (return_str[0] != '\0'))
+            {
+               char *end_ptr = return_str,
+                    *start_ptr;
+
+               do
+               {
+                  start_ptr = end_ptr;
+                  while ((*end_ptr != '\n') && (*end_ptr != '\0'))
+                  {
+                     end_ptr++;
+                  }
+                  if (*end_ptr == '\n')
+                  {
+                     *end_ptr = '\0';
+                     end_ptr++;
+                  }
+                  trans_db_log(INFO_SIGN, __FILE__, __LINE__, NULL,
+                               "%s", start_ptr);
+               } while (*end_ptr != '\0');
+            }
+         }
+      }
       free(return_str);
       return_str = NULL;
 
@@ -387,10 +422,18 @@ main(int argc, char *argv[])
                    local_tmp_file, strerror(errno));
          exit(OPEN_FILE_DIR_ERROR);
       }
+      else
+      {
+         if (fsa->debug > NORMAL_MODE)
+         {
+            trans_db_log(DEBUG_SIGN, __FILE__, __LINE__, NULL,
+                         "opendir() `%s'", local_tmp_file);
+         }
+      }
       while ((p_dir = readdir(dp)) != NULL)
       {
 #ifdef LINUX
-         if ((p_dir->d_type == DT_REG) || (p_dir->d_name[0] == '.'))
+         if ((p_dir->d_type != DT_REG) || (p_dir->d_name[0] == '.'))
 #else
          if (p_dir->d_name[0] == '.')
 #endif
@@ -399,12 +442,24 @@ main(int argc, char *argv[])
             continue;
          }
          (void)strcpy(p_local_tmp_file, p_dir->d_name);
-         if (stat(local_tmp_file, &stat_buf) < 0)
+#ifdef HAVE_STATX
+         if (statx(0, local_tmp_file, AT_STATX_SYNC_AS_STAT,
+# ifndef LINUX
+                   STATX_MODE |
+# endif
+                   STATX_SIZE, &stat_buf) == -1)
+#else
+         if (stat(local_tmp_file, &stat_buf) == -1)
+#endif
          {
             if (errno != ENOENT)
             {
                trans_log(WARN_SIGN, __FILE__, __LINE__, NULL, NULL,
+#ifdef HAVE_STATX
+                         _("Failed to statx() file `%s' : %s"),
+#else
                          _("Failed to stat() file `%s' : %s"),
+#endif
                          local_tmp_file, strerror(errno));
             }
             continue;
@@ -412,7 +467,11 @@ main(int argc, char *argv[])
 
 #ifndef LINUX
          /* Sure it is a normal file? */
+#ifdef HAVE_STATX
+         if (S_ISREG(stat_buf.stx_mode))
+#else
          if (S_ISREG(stat_buf.st_mode))
+#endif
          {
 #endif
             /* Generate name for the new file. */
@@ -428,11 +487,19 @@ main(int argc, char *argv[])
             {
                if (db.fsa_pos != INCORRECT)
                {
+#ifdef HAVE_STATX
+                  fsa->job_status[(int)db.job_no].file_size_done += stat_buf.stx_size;
+#else
                   fsa->job_status[(int)db.job_no].file_size_done += stat_buf.st_size;
+#endif
                   fsa->job_status[(int)db.job_no].no_of_files_done += 1;
                }
                files_retrieved++;
+#ifdef HAVE_STATX
+               file_size_retrieved += stat_buf.stx_size;
+#else
                file_size_retrieved += stat_buf.st_size;
+#endif
                if (fsa->debug > NORMAL_MODE)
                {
                   trans_db_log(INFO_SIGN, __FILE__, __LINE__, NULL,
@@ -459,7 +526,7 @@ main(int argc, char *argv[])
             ((more_files_in_list == YES) ||
              ((db.keep_connected > 0) && (exec_timeup() == SUCCESS))));
 
-   if (db.fsa_pos != INCORRECT)
+   if ((fsa != NULL) && (db.fsa_pos >= 0) && (fsa_pos_save == YES))
    {
       fsa->job_status[(int)db.job_no].connect_status = CLOSING_CONNECTION;
    }
@@ -484,6 +551,11 @@ gf_exec_exit(void)
       trans_log(INFO_SIGN, NULL, 0, NULL, NULL, "%s @%x",
                 buffer, db.id.dir);
       reset_fsa((struct job *)&db, exitflag, 0, 0);
+      fsa_detach_pos(db.fsa_pos);
+   }
+   if ((fra != NULL) && (db.fra_pos >= 0) && (p_no_of_dirs != NULL))
+   {
+      fra_detach_pos(db.fra_pos);
    }
 
    send_proc_fin(NO);

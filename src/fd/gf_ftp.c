@@ -1,6 +1,6 @@
 /*
  *  gf_ftp.c - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 2000 - 2022 Holger Kiehl <Holger.Kiehl@dwd.de>
+ *  Copyright (c) 2000 - 2023 Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -992,11 +992,7 @@ main(int argc, char *argv[])
             char *p_local_tmp_file;
 
             if ((more_files_in_list == YES) &&
-#ifdef NEW_FRA
                 ((fra->dir_options & DO_NOT_PARALLELIZE) == 0) &&
-#else
-                ((fra->dir_flag & DO_NOT_PARALLELIZE) == 0) &&
-#endif
                 (fsa->active_transfers < fsa->allowed_transfers))
             {
                /* Tell fd that he may start some more helper jobs that */
@@ -1008,11 +1004,7 @@ main(int argc, char *argv[])
             /* will now start to retrieve data.                */
             if (gsf_check_fsa((struct job *)&db) != NEITHER)
             {
-#ifdef NEW_FRA
                if (((fra->dir_options & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#else
-               if (((fra->dir_flag & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#endif
                     (db.special_flag & DISTRIBUTED_HELPER_JOB))
                {
                   fsa->job_status[(int)db.job_no].no_of_files += files_to_retrieve;
@@ -1096,11 +1088,7 @@ main(int argc, char *argv[])
                p_local_tmp_file++;
             }
 
-#ifdef NEW_FRA
             if (((fra->dir_options & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#else
-            if (((fra->dir_flag & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#endif
                 (db.special_flag & DISTRIBUTED_HELPER_JOB))
             {
                int                  diff_no_of_files_done,
@@ -1108,7 +1096,11 @@ main(int argc, char *argv[])
                                     i;
                off_t                bytes_done;
                char                 *buffer;
+#ifdef HAVE_STATX
+               struct statx         stat_buf;
+#else
                struct stat          stat_buf;
+#endif
                struct retrieve_list tmp_rl;
 
                /* Allocate buffer to read data from the source file. */
@@ -1188,7 +1180,12 @@ main(int argc, char *argv[])
                      }
                      if (fsa->file_size_offset != -1)
                      {
+#ifdef HAVE_STATX
+                        if (statx(0, local_tmp_file, AT_STATX_SYNC_AS_STAT,
+                                  STATX_SIZE, &stat_buf) == -1)
+#else
                         if (stat(local_tmp_file, &stat_buf) == -1)
+#endif
                         {
                            if (fra->stupid_mode == APPEND_ONLY)
                            {
@@ -1201,7 +1198,11 @@ main(int argc, char *argv[])
                         }
                         else
                         {
+#ifdef HAVE_STATX
+                           offset = stat_buf.stx_size;
+#else
                            offset = stat_buf.st_size;
+#endif
                            prev_download_exists = YES;
                         }
                      }
@@ -2069,18 +2070,10 @@ main(int argc, char *argv[])
                                          (struct job *)&db);
                  if ((more_files_in_list == YES) &&
                      ((db.special_flag & DISTRIBUTED_HELPER_JOB) == 0) &&
-#ifdef NEW_FRA
                      (fra->dir_options & ONE_PROCESS_JUST_SCANNING))
-#else
-                     (fra->dir_flag & ONE_PROCESS_JUST_SCANNING))
-#endif
                  {
                     more_files_in_list = NO;
-#ifdef NEW_FRA
                     if (((fra->dir_options & DO_NOT_PARALLELIZE) == 0) &&
-#else
-                    if (((fra->dir_flag & DO_NOT_PARALLELIZE) == 0) &&
-#endif
                         (fsa->active_transfers < fsa->allowed_transfers))
                     {
                        /* Tell fd that he may start some more helper jobs that */
@@ -2123,7 +2116,7 @@ burst2_no_new_dir_mtime:
    }
 #endif /* _WITH_BURST_2 */
 
-   if (db.fsa_pos != INCORRECT)
+   if ((fsa != NULL) && (db.fsa_pos >= 0) && (fsa_pos_save == YES))
    {
       fsa->job_status[(int)db.job_no].connect_status = CLOSING_CONNECTION;
    }
@@ -2530,6 +2523,11 @@ gf_ftp_exit(void)
       }
       reset_fsa((struct job *)&db, exitflag, files_to_retrieve_shown,
                 file_size_to_retrieve_shown);
+      fsa_detach_pos(db.fsa_pos);
+   }
+   if ((fra != NULL) && (db.fra_pos >= 0) && (p_no_of_dirs != NULL))
+   {
+      fra_detach_pos(db.fra_pos);
    }
 
    send_proc_fin(NO);

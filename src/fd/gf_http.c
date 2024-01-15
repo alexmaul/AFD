@@ -1,6 +1,6 @@
 /*
  *  gf_http.c - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 2003 - 2022 Holger Kiehl <Holger.Kiehl@dwd.de>
+ *  Copyright (c) 2003 - 2023 Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -203,7 +203,11 @@ main(int argc, char *argv[])
                     *chunkbuffer = NULL,
                     *p_current_real_hostname,
                     *p_local_tmp_file;
+#ifdef HAVE_STATX
+   struct statx     stat_buf;
+#else
    struct stat      stat_buf;
+#endif
 #ifdef SA_FULLDUMP
    struct sigaction sact;
 #endif
@@ -343,19 +347,11 @@ main(int argc, char *argv[])
    {
       features |= BUCKETNAME_IS_IN_PATH;
    }
-#ifdef NEW_FRA
    if (fra->dir_options & NO_DELIMITER)
-#else
-   if (fra->dir_flag & NO_DELIMITER)
-#endif
    {
       fra_options |= NO_DELIMITER;
    }
-#ifdef NEW_FRA
    if (fra->dir_options & KEEP_PATH)
-#else
-   if (fra->dir_flag & KEEP_PATH)
-#endif
    {
       fra_options |= KEEP_PATH;
    }
@@ -364,7 +360,7 @@ main(int argc, char *argv[])
 #ifdef WITH_SSL
                          db.ssh_protocol, db.service, db.region, db.tls_auth,
 #endif
-                         db.sndbuf_size, db.rcvbuf_size);
+                         db.sndbuf_size, db.rcvbuf_size, fsa->debug);
 #ifdef WITH_IP_DB
    if (get_and_reset_store_ip() == DONE)
    {
@@ -441,6 +437,10 @@ main(int argc, char *argv[])
 # endif
                          values_changed);
          }
+         if (values_changed & USER_CHANGED)
+         {
+            http_reset_authentication(db.auth);
+         }
       }
 
       if ((in_burst_loop == NO) || (values_changed & TARGET_DIR_CHANGED))
@@ -469,19 +469,6 @@ main(int argc, char *argv[])
          }
 #endif /* WITH_OPTIONS_CALL */
 #ifdef _WITH_BURST_2
-      }
-#endif /* _WITH_BURST_2 */
-
-#ifdef _WITH_BURST_2
-      if ((in_burst_loop == NO) || (values_changed & USER_CHANGED))
-      {
-         if (http_init_authentication(db.user, db.password) != SUCCESS)
-         {
-            /* Note, http_init_authentication() writes a message to    */
-            /* trans_log() why it was not able to generate the string. */
-            http_quit();
-            exit(INCORRECT);
-         }
       }
 #endif /* _WITH_BURST_2 */
 
@@ -531,11 +518,7 @@ main(int argc, char *argv[])
          if ((files_to_retrieve = get_remote_file_names_http(&file_size_to_retrieve,
                                                              &more_files_in_list)) > 0)
          {
-#ifdef NEW_FRA
             if ((fra->dir_options & ONE_PROCESS_JUST_SCANNING) &&
-#else
-            if ((fra->dir_flag & ONE_PROCESS_JUST_SCANNING) &&
-#endif
                 ((db.special_flag & DISTRIBUTED_HELPER_JOB) == 0))
             {
                (void)gsf_check_fra((struct job *)&db);
@@ -549,11 +532,7 @@ main(int argc, char *argv[])
                }
             }
             if ((more_files_in_list == YES) &&
-#ifdef NEW_FRA
                 ((fra->dir_options & DO_NOT_PARALLELIZE) == 0) &&
-#else
-                ((fra->dir_flag & DO_NOT_PARALLELIZE) == 0) &&
-#endif
                 (fsa->active_transfers < fsa->allowed_transfers))
             {
                /* Tell fd that he may start some more helper jobs that */
@@ -565,11 +544,7 @@ main(int argc, char *argv[])
             /* will now start to retrieve data.                */
             if (gsf_check_fsa((struct job *)&db) != NEITHER)
             {
-#ifdef NEW_FRA
                if (((fra->dir_options & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#else
-               if (((fra->dir_flag & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#endif
                     (db.special_flag & DISTRIBUTED_HELPER_JOB))
                {
                   fsa->job_status[(int)db.job_no].no_of_files += files_to_retrieve;
@@ -653,11 +628,7 @@ main(int argc, char *argv[])
                p_local_tmp_file++;
             }
 
-#ifdef NEW_FRA
             if (((fra->dir_options & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#else
-            if (((fra->dir_flag & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#endif
                 (db.special_flag & DISTRIBUTED_HELPER_JOB))
             {
                int                  diff_no_of_files_done;
@@ -733,11 +704,7 @@ main(int argc, char *argv[])
                            prev_download_exists = NO;
                      off_t offset;
 
-#ifdef NEW_FRA
                      if (fra->dir_options & URL_CREATES_FILE_NAME)
-#else
-                     if (fra->dir_flag & URL_CREATES_FILE_NAME)
-#endif
                      {
                         int end;
 
@@ -774,7 +741,12 @@ main(int argc, char *argv[])
                         *(p_local_tmp_file + fd) = '\0';
                         if (fsa->file_size_offset != -1)
                         {
+#ifdef HAVE_STATX
+                           if (statx(0, local_tmp_file, AT_STATX_SYNC_AS_STAT,
+                                     STATX_SIZE, &stat_buf) == -1)
+#else
                            if (stat(local_tmp_file, &stat_buf) == -1)
+#endif
                            {
                               if (fra->stupid_mode == APPEND_ONLY)
                               {
@@ -787,7 +759,11 @@ main(int argc, char *argv[])
                            }
                            else
                            {
+#ifdef HAVE_STATX
+                              offset = stat_buf.stx_size;
+#else
                               offset = stat_buf.st_size;
+#endif
                               prev_download_exists = YES;
                            }
                         }
@@ -804,11 +780,7 @@ main(int argc, char *argv[])
                         }
 
                         if ((tmp_rl.size == -1) &&
-#ifdef NEW_FRA
                             ((fra->dir_options & DONT_GET_DIR_LIST) == 0))
-#else
-                            ((fra->dir_flag & DONT_GET_DIR_LIST) == 0))
-#endif
                         {
                            content_length = 0;
                         }
@@ -833,11 +805,7 @@ main(int argc, char *argv[])
 #endif
                      if (((status = http_get(db.target_dir,
                                              tmp_rl.file_name,
-#ifdef NEW_FRA
                                              (fra->dir_options & URL_CREATES_FILE_NAME) ? tmp_rl.file_name : NULL,
-#else
-                                             (fra->dir_flag & URL_CREATES_FILE_NAME) ? tmp_rl.file_name : NULL,
-#endif
 #ifdef _WITH_EXTRA_CHECK
                                              tmp_rl.extra_data,
 #endif
@@ -849,11 +817,7 @@ main(int argc, char *argv[])
                         trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL,
                                   (status == INCORRECT) ? NULL : msg_str,
                                   "Failed to open remote file %s in %s (%d).",
-#ifdef NEW_FRA
                                   (fra->dir_options & URL_CREATES_FILE_NAME) ? db.target_dir : tmp_rl.file_name,
-#else
-                                  (fra->dir_flag & URL_CREATES_FILE_NAME) ? db.target_dir : tmp_rl.file_name,
-#endif
                                   fra->dir_alias, status);
                         http_quit();
                         reset_values(files_retrieved, file_size_retrieved,
@@ -881,11 +845,7 @@ main(int argc, char *argv[])
                         bytes_done = 0;
                         trans_log(INFO_SIGN, __FILE__, __LINE__, NULL, msg_str,
                                   "Failed to open remote file %s in %s (%d).",
-#ifdef NEW_FRA
                                   (fra->dir_options & URL_CREATES_FILE_NAME) ? db.target_dir : tmp_rl.file_name,
-#else
-                                  (fra->dir_flag & URL_CREATES_FILE_NAME) ? db.target_dir : tmp_rl.file_name,
-#endif
                                   fra->dir_alias, status);
 
                         /* Delete partly downloaded file. */
@@ -1025,18 +985,10 @@ main(int argc, char *argv[])
                         {
                            trans_db_log(INFO_SIGN, __FILE__, __LINE__, NULL,
                                         "Opened HTTP connection for file %s.",
-#ifdef NEW_FRA
                                         (fra->dir_options & URL_CREATES_FILE_NAME) ? db.target_dir : tmp_rl.file_name
-#else
-                                        (fra->dir_flag & URL_CREATES_FILE_NAME) ? db.target_dir : tmp_rl.file_name
-#endif
                                         );
                         }
-#ifdef NEW_FRA
                         if (fra->dir_options & URL_CREATES_FILE_NAME)
-#else
-                        if (fra->dir_flag & URL_CREATES_FILE_NAME)
-#endif
                         {
                            if (tmp_rl.file_name[0] == '\0')
                            {
@@ -1174,7 +1126,7 @@ main(int argc, char *argv[])
                                     if ((status = http_read(buffer, blocksize)) <= 0)
                                     {
                                        trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL,
-                                                 (status > 0) ? NULL : msg_str,
+                                                 (status > 0) ? msg_str : NULL,
                                                  "Failed to read from remote file %s in %s (%d)",
                                                  tmp_rl.file_name,
                                                  fra->dir_alias, status);
@@ -1320,7 +1272,7 @@ main(int argc, char *argv[])
                                     if ((status = http_read(buffer, hunk_size)) <= 0)
                                     {
                                        trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL,
-                                                 (status > 0) ? NULL : msg_str,
+                                                 (status > 0) ? msg_str : NULL,
                                                  "Failed to read from remote file %s in %s (%d)",
                                                  tmp_rl.file_name,
                                                  fra->dir_alias, status);
@@ -1449,7 +1401,7 @@ main(int argc, char *argv[])
                               do
                               {
                                  if ((status = http_chunk_read(&chunkbuffer,
-                                                               &chunksize)) == INCORRECT)
+                                                               &chunksize)) < 0)
                                  {
                                     trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL,
                                               (status == INCORRECT) ? NULL : msg_str,
@@ -1752,11 +1704,7 @@ main(int argc, char *argv[])
                         }
 
                         /* Rename the file so AMG can grab it. */
-#ifdef NEW_FRA
                         if (fra->dir_options & URL_CREATES_FILE_NAME)
-#else
-                        if (fra->dir_flag & URL_CREATES_FILE_NAME)
-#endif
                         {
                            if (tmp_rl.file_name[0] == '\0')
                            {
@@ -1787,11 +1735,7 @@ main(int argc, char *argv[])
                            }
                         }
                         fd = 0;
-#ifdef NEW_FRA
                         if (fra->dir_options & KEEP_PATH)
-#else
-                        if (fra->dir_flag & KEEP_PATH)
-#endif
                         {
                            if (tmp_rl.file_name[0] == '.')
                            {
@@ -2034,6 +1978,7 @@ main(int argc, char *argv[])
                if (chunkbuffer != NULL)
                {
                   free(chunkbuffer);
+                  chunkbuffer = NULL;
                }
             }
             else
@@ -2079,18 +2024,10 @@ main(int argc, char *argv[])
                                          (struct job *)&db);
                  if ((more_files_in_list == YES) &&
                      ((db.special_flag & DISTRIBUTED_HELPER_JOB) == 0) &&
-#ifdef NEW_FRA
                      (fra->dir_options & ONE_PROCESS_JUST_SCANNING))
-#else
-                     (fra->dir_flag & ONE_PROCESS_JUST_SCANNING))
-#endif
                  {
                     more_files_in_list = NO;
-#ifdef NEW_FRA
                     if (((fra->dir_options & DO_NOT_PARALLELIZE) == 0) &&
-#else
-                    if (((fra->dir_flag & DO_NOT_PARALLELIZE) == 0) &&
-#endif
                         (fsa->active_transfers < fsa->allowed_transfers))
                     {
                        /* Tell fd that he may start some more helper jobs that */
@@ -2127,7 +2064,7 @@ main(int argc, char *argv[])
    }
 #endif /* _WITH_BURST_2 */
 
-   if (db.fsa_pos != INCORRECT)
+   if ((fsa != NULL) && (db.fsa_pos >= 0) && (fsa_pos_save == YES))
    {
       fsa->job_status[(int)db.job_no].connect_status = CLOSING_CONNECTION;
    }
@@ -2393,6 +2330,11 @@ gf_http_exit(void)
       }
       reset_fsa((struct job *)&db, exitflag, files_to_retrieve_shown,
                 file_size_to_retrieve_shown);
+      fsa_detach_pos(db.fsa_pos);
+   }
+   if ((fra != NULL) && (db.fra_pos >= 0) && (p_no_of_dirs != NULL))
+   {
+      fra_detach_pos(db.fra_pos);
    }
 
    send_proc_fin(NO);

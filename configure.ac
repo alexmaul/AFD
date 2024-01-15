@@ -1,6 +1,6 @@
 dnl Process this file with autoconf to produce a configure script.
 AC_PREREQ([2.59])
-AC_INIT([afd],[1.4.8-0.10.beta],[Holger.Kiehl@dwd.de])
+AC_INIT([afd],[1.4.13],[Holger.Kiehl@dwd.de])
 AC_CONFIG_SRCDIR(src/init_afd/afd.c)
 AC_CONFIG_AUX_DIR(ac-tools)
 dnl# AC_PREFIX_DEFAULT("/usr/local/afd")
@@ -14,11 +14,8 @@ REQUIRES=""
 BUILD_REQUIRES=""
 BUILD_REQUIRES_REDHAT=""
 
-afd_full_version="$VERSION"
-AFD_VERSION=`echo $VERSION | cut -d '-' -f 1`
+AFD_VERSION="$VERSION"
 AC_SUBST(AFD_VERSION)
-AFD_RELEASE=`echo $VERSION | cut -d '-' -f 2`
-AC_SUBST(AFD_RELEASE)
 
 AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[]], [[long long i;]])],[AC_DEFINE(HAVE_LONG_LONG, 1, Define if C compiler supports long long type.)],[])
 
@@ -386,6 +383,12 @@ AC_ARG_ENABLE(ms_error_workaround,
       AC_DEFINE([WITH_MS_ERROR_WORKAROUND], [], [With MS FTP error workaround])
    fi])
 
+AC_ARG_ENABLE(ftp_reuse_data_port,
+   [  --enable-no_auto_basic_auth     disable automatic default basic HTTP authorization],
+   [if test x$enableval = xyes; then
+      AC_DEFINE([HTTP_NO_AUTO_BASIC_AUTH], [], [Without automatic HTTP basic auth])
+   fi])
+
 AC_ARG_ENABLE(group_can_write,
    [  --enable-group_can_write        allow group write access],
    [if test x$enableval = xyes; then
@@ -684,22 +687,22 @@ AC_ARG_WITH(max-no-of-parallel-jobs,
             [],
             if test "$ac_cv_with_afdbench_settings" = "yes"
             then
-               with_max_no_of_parallel_jobs=10
+               with_max_no_of_parallel_jobs=12
             else
-               with_max_no_of_parallel_jobs=5
+               with_max_no_of_parallel_jobs=9
             fi)
 AC_DEFINE_UNQUOTED([MAX_NO_PARALLEL_JOBS], [$with_max_no_of_parallel_jobs], [
   The value of MAX_NO_PARALLEL_JOBS determines the number of parallel
-  transfers per host. The default is 5, which should be enough in most
+  transfers per host. The default is 9, which should be enough in most
   cases. However, on some long distance lines or lines with high latencies
   it might be necessary to increase this value.])
 AC_ARG_WITH(default-no-of-parallel-jobs,
             AS_HELP_STRING([--with-default-no-of-parallel-jobs=N],
-                           [default number of parallel transfers per host (default=2)]),
-            , with_default_no_of_parallel_jobs=2)
+                           [default number of parallel transfers per host (default=3)]),
+            , with_default_no_of_parallel_jobs=3)
 AC_DEFINE_UNQUOTED([DEFAULT_NO_PARALLEL_JOBS], [$with_default_no_of_parallel_jobs], [
   The value of DEFAULT_NO_PARALLEL_JOBS determines the default number of
-  parallel transfers per host. The default is 2.])
+  parallel transfers per host. The default is 3.])
 AC_ARG_WITH(default-archive-unit,
             AS_HELP_STRING([--with-default-archive-unit=N],
                            [default archive unit in seconds (default=86400)]),
@@ -732,8 +735,8 @@ AC_DEFINE_UNQUOTED([MAX_AFDNAME_LENGTH], [$with_max_afdname_length], [
   name length in the mon_ctrl dialog may be.])
 AC_ARG_WITH(max-real-hostname-length,
             AS_HELP_STRING([--with-max-real-hostname-length=N],
-                           [maximum real hostname length (default=40)]),
-            , with_max_real_hostname_length=40)
+                           [maximum real hostname length (default=70)]),
+            , with_max_real_hostname_length=70)
 AC_DEFINE_UNQUOTED([MAX_REAL_HOSTNAME_LENGTH], [$with_max_real_hostname_length], [
   The value of MAX_REAL_HOSTNAME_LENGTH determines how long the real
   hostname or its IP number may be.])
@@ -1338,6 +1341,22 @@ then
                     }]])],[ssl_library_ver=`cat conftest.ssllibver`
                   AC_MSG_RESULT(yes $ssl_library_ver)],[AC_MSG_RESULT(incorrect not found)
                   AC_MSG_ERROR(incorect OpenSSL library or not found.)],[])
+      AC_CHECK_FUNC([TLS_client_method],
+                    [AM_CONDITIONAL(HAVE_TLS_CLIENT_METHOD, true)
+                     AC_DEFINE([HAVE_TLS_CLIENT_METHOD], [], [With TLS_client_method support])],
+                    [AM_CONDITIONAL(HAVE_TLS_CLIENT_METHOD, false)])
+      AC_CHECK_FUNC([TLS_server_method],
+                    [AM_CONDITIONAL(HAVE_TLS_SERVER_METHOD, true)
+                     AC_DEFINE([HAVE_TLS_SERVER_METHOD], [], [With TLS_server_method support])],
+                    [AM_CONDITIONAL(HAVE_TLS_SERVER_METHOD, false)])
+      AC_CHECK_FUNC([EVP_sha256],
+                    [AM_CONDITIONAL(HAVE_EVP_SHA256, true)
+                     AC_DEFINE([HAVE_EVP_SHA256], [], [With EVP_sha256 support])],
+                    [AM_CONDITIONAL(HAVE_EVP_SHA256, false)])
+      AC_CHECK_FUNC([EVP_sha512_256],
+                    [AM_CONDITIONAL(HAVE_EVP_SHA512_256, true)
+                     AC_DEFINE([HAVE_EVP_SHA512_256], [], [With EVP_sha512_256 support])],
+                    [AM_CONDITIONAL(HAVE_EVP_SHA512_256, false)])
       LIBS="$savedLIBS"
       CPPFLAGS="$savedCPPFLAGS"
       if test "$REQUIRES" = ""
@@ -1354,7 +1373,12 @@ then
       fi
    else
       AC_MSG_RESULT(no)
+      AM_CONDITIONAL(HAVE_TLS_CLIENT_METHOD, false)
+      AM_CONDITIONAL(HAVE_TLS_SERVER_METHOD, false)
    fi
+else
+   AM_CONDITIONAL(HAVE_TLS_CLIENT_METHOD, false)
+   AM_CONDITIONAL(HAVE_TLS_SERVER_METHOD, false)
 fi
 
 no_x=""
@@ -1730,13 +1754,16 @@ AC_CHECK_FUNC([mmap],
 AC_CHECK_FUNCS(fdatasync gai_strerror getline getaddrinfo gethostname memcpy\
                mkdir mkfifo mktime rmdir select setpriority seteuid setreuid\
                socket strcasestr strerror strtod strtol strtoll strtoul\
-               strtoull unsetenv)
+               strtoull unsetenv statx)
 
 AM_GNU_GETTEXT([external])
 if test "x$LIBINTL" != "x"
 then
    LIBS="$LIBS $LIBINTL"
 fi
+
+dnl Check for zoneinfo information
+AX_ZONEINFO()
 
 AC_CONFIG_FILES([Makefile
 po/Makefile.in
@@ -1771,7 +1798,7 @@ echo "    Source code location             : ${srcdir}"
 echo "    Install path bin + sbin          : ${prefix}/bin ${prefix}/sbin"
 echo "    Install path doc                 : ${docdir}"
 echo "    Install path man                 : ${mandir}"
-echo "    AFD Version                      : ${afd_full_version}"
+echo "    AFD Version                      : $VERSION"
 echo "    Compiler                         : ${CC}"
 echo "    Compiler flags                   : ${CFLAGS}"
 echo "    GUI                              : ${GUIS_STRING}"
@@ -1781,7 +1808,7 @@ then
 fi
 if test "x${with_ssl}" = "xyes"
 then
-   echo "    With TLS/SSL support             : yes"
+   echo "    With TLS/SSL support             : yes $ssl_library_ver"
 else
    echo "    With TLS/SSL support             : no"
 fi

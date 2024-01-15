@@ -1,6 +1,6 @@
 /*
  *  mshow_log.c - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 1996 - 2019 Holger Kiehl <Holger.Kiehl@dwd.de>
+ *  Copyright (c) 1996 - 2023 Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -58,8 +58,6 @@ DESCR__E_M1
 # include <sys/time.h>
 # include <sys/resource.h>       /* setpriority()                        */
 #endif
-#include <sys/types.h>
-#include <sys/stat.h>
 #include <unistd.h>              /* gethostname(), STDERR_FILENO         */
 #include <stdlib.h>              /* getenv(), exit()                     */
 #include <X11/Xlib.h>
@@ -691,8 +689,7 @@ main(int argc, char *argv[])
                                      pane_w, args, argcount);
 
       /* Add callback handler. */
-      XtAddCallback(button, XmNactivateCallback, toggled_log_no,
-                    (XtPointer)i);
+      XtAddCallback(button, XmNactivateCallback, toggled_log_no, (XtPointer)i);
    }
    argcount = 0;
    XtSetArg(args[argcount], XmNfontList, fontlist);
@@ -1135,19 +1132,6 @@ init_log_file(int *argc, char *argv[], char *window_title)
       (void)fprintf(stderr, "ERROR   : Could not fopen() %s : %s (%s %d)\n",
                     log_file, strerror(errno), __FILE__, __LINE__);
       exit(INCORRECT);
-   }
-   if ((log_type_flag != TRANSFER_LOG_TYPE) &&
-       (log_type_flag != RECEIVE_LOG_TYPE) && (current_log_number == 0))
-   {
-      struct stat stat_buf;
-
-      if (fstat(fileno(p_log_file), &stat_buf) == -1)
-      {
-         (void)fprintf(stderr, "ERROR   : Could not fstat() %s : %s (%s %d)\n",
-                       log_file, strerror(errno), __FILE__, __LINE__);
-         exit(INCORRECT);
-      }
-      current_inode_no = stat_buf.st_ino;
    }
 
    /* Collect all hostnames. */

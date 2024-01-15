@@ -1,6 +1,6 @@
 /*
  *  eval_dir_config.c - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 1995 - 2022 Deutscher Wetterdienst (DWD),
+ *  Copyright (c) 1995 - 2023 Deutscher Wetterdienst (DWD),
  *                            Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
@@ -117,6 +117,9 @@ DESCR__S_M3
  **                      do not need, to fool it to do syntax checking.
  **   10.04.2017 H.Kiehl Added debug_fp parameter to print warnings and
  **                      errors.
+ **   12.02.2023 H.Kiehl Variable group_name was used by init_dir_group_name()
+ **                      init_recipient_group_name() thus leaking memory.
+ **                      Each need their own variable.
  **
  */
 DESCR__E_M3
@@ -343,7 +346,8 @@ eval_dir_config(off_t        db_size,
                                               /* destination entry.       */
                          created_path[MAX_PATH_LENGTH],
                          dir_user[MAX_USER_NAME_LENGTH],
-                         group_name[MAX_GROUPNAME_LENGTH],
+                         dir_group_name[MAX_GROUPNAME_LENGTH],
+                         recipient_group_name[MAX_GROUPNAME_LENGTH],
                          prev_user_name[MAX_USER_NAME_LENGTH],
                          prev_user_dir[MAX_PATH_LENGTH],
                          user[MAX_USER_NAME_LENGTH],
@@ -369,6 +373,18 @@ eval_dir_config(off_t        db_size,
    }
    else
    {
+#ifdef HAVE_STATX
+      struct statx stat_buf;
+
+      if (statx(0, p_work_dir, AT_STATX_SYNC_AS_STAT,
+                STATX_UID, &stat_buf) == -1)
+      {
+         system_log(FATAL_SIGN, __FILE__, __LINE__,
+                    "Failed to statx() `%s' : %s", p_work_dir, strerror(errno));
+         exit(INCORRECT);
+      }
+      current_uid = stat_buf.stx_uid;
+#else
       struct stat stat_buf;
 
       if (stat(p_work_dir, &stat_buf) == -1)
@@ -378,6 +394,7 @@ eval_dir_config(off_t        db_size,
          exit(INCORRECT);
       }
       current_uid = stat_buf.st_uid;
+#endif
    }
    dir->file = NULL;
    prev_user_name[0] = '\0';
@@ -597,7 +614,7 @@ eval_dir_config(off_t        db_size,
 
          /* Store directory name. */
          i = 0;
-         group_name[0] = '\0';
+         dir_group_name[0] = '\0';
          while ((*ptr != '\n') && (*ptr != '\0') && (i < (MAX_PATH_LENGTH - 2)))
          {
             if ((*ptr == '\\') && ((*(ptr + 1) == '#') ||
@@ -648,13 +665,13 @@ eval_dir_config(off_t        db_size,
                        while ((*ptr != close_bracket) &&
                               (*ptr != '\n') && (*ptr != '\0'))
                        {
-                          group_name[j] = *ptr;
+                          dir_group_name[j] = *ptr;
                           dir->location[i] = *ptr;
                           j++; ptr++; i++;
                        }
                        if (*ptr == close_bracket)
                        {
-                          group_name[j] = '\0';
+                          dir_group_name[j] = '\0';
                           dir->location[i] = *ptr;
                           ptr++; i++;
                           *using_groups = YES;
@@ -663,7 +680,7 @@ eval_dir_config(off_t        db_size,
                        {
                           /* No end marker, so just take it as a normal */
                           /* directory entry.                           */
-                          group_name[0] = '\0';
+                          dir_group_name[0] = '\0';
                        }
                     }
                     else
@@ -690,10 +707,10 @@ eval_dir_config(off_t        db_size,
          dir->location_length = i;
 
          dir_group_loop_ptr = ptr;
-         if (group_name[0] != '\0')
+         if (dir_group_name[0] != '\0')
          {
             init_dir_group_name(dir->location, &dir->location_length,
-                                group_name, dir_group_type);
+                                dir_group_name, dir_group_type);
          }
 
          do
@@ -708,7 +725,7 @@ eval_dir_config(off_t        db_size,
                     tmp_location[MAX_PATH_LENGTH];
 
                (void)memcpy(dir->orig_dir_name, dir->location,
-                            dir->location_length);
+                            dir->location_length + 1);
                tmp_ptr = dir->location;
                while ((*tmp_ptr != '/') && (*tmp_ptr != '\n') &&
                       (*tmp_ptr != '\0') && (*tmp_ptr != ' ') &&
@@ -777,7 +794,7 @@ eval_dir_config(off_t        db_size,
             else if (dir->location[0] == '/')
                  {
                     (void)memcpy(dir->orig_dir_name, dir->location,
-                                 dir->location_length);
+                                 dir->location_length + 1);
                     dir->location_length = optimise_dir(dir->location);
                     dir->type = LOCALE_DIR;
                     dir->protocol = LOC;
@@ -817,7 +834,7 @@ eval_dir_config(off_t        db_size,
                     else if (dir->scheme & LOC_FLAG)
                          {
                             (void)memcpy(dir->orig_dir_name, dir->location,
-                                         dir->location_length);
+                                         dir->location_length + 1);
                             dir->type = LOCALE_DIR;
                             dir->protocol = LOC;
                             if ((dir->real_hostname[0] != '\0') &&
@@ -875,7 +892,7 @@ eval_dir_config(off_t        db_size,
                                }
                             }
                             (void)memcpy(dir->orig_dir_name, dir->location,
-                                         dir->location_length);
+                                         dir->location_length + 1);
                             if (directory[0] == '\0')
                             {
                                (void)strcpy(dir->location, prev_user_dir);
@@ -1511,7 +1528,7 @@ eval_dir_config(off_t        db_size,
 
                         /* Store recipient. */
                         i = 0;
-                        group_name[0] = '\0';
+                        recipient_group_name[0] = '\0';
                         tmp_ptr = search_ptr = ptr;
                         while ((*ptr != '\n') && (*ptr != '\0'))
                         {
@@ -1586,7 +1603,7 @@ eval_dir_config(off_t        db_size,
                                    while ((*ptr != close_bracket) &&
                                           (*ptr != '\n') && (*ptr != '\0'))
                                    {
-                                      group_name[j] = *ptr;
+                                      recipient_group_name[j] = *ptr;
                                       dir->file[dir->fgc].\
                                               dest[dir->file[dir->fgc].dgc].\
                                               rec[dir->file[dir->fgc].\
@@ -1596,14 +1613,14 @@ eval_dir_config(off_t        db_size,
                                    }
                                    if (*ptr == close_bracket)
                                    {
-                                      group_name[j] = '\0';
+                                      recipient_group_name[j] = '\0';
                                       *using_groups = YES;
                                    }
                                    else
                                    {
                                       /* No end marker, so just take it as a normal */
                                       /* directory entry.                           */
-                                      group_name[0] = '\0';
+                                      recipient_group_name[0] = '\0';
                                    }
                                 }
                            dir->file[dir->fgc].dest[dir->file[dir->fgc].dgc].\
@@ -1624,14 +1641,14 @@ eval_dir_config(off_t        db_size,
                         /* Make sure that we did read a line. */
                         if (i != 0)
                         {
-                           if (group_name[0] != '\0')
+                           if (recipient_group_name[0] != '\0')
                            {
                               init_recipient_group_name(dir->file[dir->fgc].\
                                                         dest[dir->file[dir->fgc].dgc].\
                                                         rec[dir->file[dir->fgc].\
                                                         dest[dir->file[dir->fgc].dgc].rc].\
                                                         recipient,
-                                                        group_name,
+                                                        recipient_group_name,
                                                         dir_group_type);
                            }
 
@@ -2353,7 +2370,11 @@ check_dummy_line:
                                 *error_ptr = '\0';
                              }
                              update_db_log(WARN_SIGN, __FILE__, __LINE__, debug_fp, warn_counter,
+#ifdef HAVE_STATX
+                                           "Failed to statx() `%s' at line %d from %s : %s",
+#else
                                            "Failed to stat() `%s' at line %d from %s : %s",
+#endif
                                            dir->location,
                                            count_new_lines(database, dir_ptr),
                                            dcl[dcd].dir_config_file,
@@ -2477,7 +2498,7 @@ check_dummy_line:
          } while (next_dir_group_name(dir->location, &dir->location_length,
                                       dir->alias) == 1);
 
-         if (group_name[0] != '\0')
+         if (dir_group_name[0] != '\0')
          {
             free_dir_group_name();
          }

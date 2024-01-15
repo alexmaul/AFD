@@ -1,6 +1,6 @@
 /*
  *  fra_edit.c - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 2007 - 2021 Holger Kiehl <Holger.Kiehl@dwd.de>
+ *  Copyright (c) 2007 - 2023 Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -228,17 +228,10 @@ main(int argc, char *argv[])
                                   (fra[position].dir_flag & LINK_NO_EXEC) ? 1 : 0);
                     (void)fprintf(stdout, "     DIR_DISABLED [%d].............(4)\n",
                                   (fra[position].dir_flag & DIR_DISABLED) ? 1 : 0);
-#ifdef NEW_FRA
                     (void)fprintf(stdout, "     ACCEPT_DOT_FILES [%d].........(5)\n",
                                   (fra[position].dir_options & ACCEPT_DOT_FILES) ? 1 : 0);
                     (void)fprintf(stdout, "     DONT_GET_DIR_LIST [%d]........(6)\n",
                                   (fra[position].dir_options & DONT_GET_DIR_LIST) ? 1 : 0);
-#else
-                    (void)fprintf(stdout, "     ACCEPT_DOT_FILES [%d].........(5)\n",
-                                  (fra[position].dir_flag & ACCEPT_DOT_FILES) ? 1 : 0);
-                    (void)fprintf(stdout, "     DONT_GET_DIR_LIST [%d]........(6)\n",
-                                  (fra[position].dir_flag & DONT_GET_DIR_LIST) ? 1 : 0);
-#endif
                     (void)fprintf(stdout, "     DIR_ERROR_SET [%d]............(7)\n",
                                   (fra[position].dir_flag & DIR_ERROR_SET) ? 1 : 0);
                     (void)fprintf(stdout, "     WARN_TIME_REACHED [%d]........(8)\n",
@@ -254,7 +247,6 @@ main(int argc, char *argv[])
                     (void)fprintf(stdout, "     DIR_STOPPED [%d]..............(d)\n",
                                   (fra[position].dir_flag & DIR_ERROR_OFFL_T) ? 1 : 0);
 #ifdef WITH_INOTIFY
-# ifdef NEW_FRA
                     (void)fprintf(stdout, "     INOTIFY_RENAME [%d]...........(e)\n",
                                   (fra[position].dir_options & INOTIFY_RENAME) ? 1 : 0);
                     (void)fprintf(stdout, "     INOTIFY_CLOSE [%d]............(f)\n",
@@ -263,18 +255,10 @@ main(int argc, char *argv[])
                                   (fra[position].dir_options & INOTIFY_CREATE) ? 1 : 0);
                     (void)fprintf(stdout, "     INOTIFY_DELETE [%d]...........(h)\n",
                                   (fra[position].dir_options & INOTIFY_DELETE) ? 1 : 0);
-# else
-                    (void)fprintf(stdout, "     INOTIFY_RENAME [%d]...........(e)\n",
-                                  (fra[position].dir_flag & INOTIFY_RENAME) ? 1 : 0);
-                    (void)fprintf(stdout, "     INOTIFY_CLOSE [%d]............(f)\n",
-                                  (fra[position].dir_flag & INOTIFY_CLOSE) ? 1 : 0);
-                    (void)fprintf(stdout, "     INOTIFY_CREATE [%d]...........(g)\n",
-                                  (fra[position].dir_flag & INOTIFY_CREATE) ? 1 : 0);
-                    (void)fprintf(stdout, "     INOTIFY_DELETE [%d]...........(h)\n",
-                                  (fra[position].dir_flag & INOTIFY_DELETE) ? 1 : 0);
-# endif
+                    (void)fprintf(stdout, "     INOTIFY_ATTRIB [%d]...........(i)\n",
+                                  (fra[position].dir_options & INOTIFY_ATTRIB) ? 1 : 0);
 #endif
-                    (void)fprintf(stdout, "     ALL_DISABLED [%d].............(i)\n",
+                    (void)fprintf(stdout, "     ALL_DISABLED [%d].............(j)\n",
                                   (fra[position].dir_flag & ALL_DISABLED) ? 1 : 0);
                     (void)fprintf(stderr, "     None..........................(Z) ");
 
@@ -290,17 +274,9 @@ main(int argc, char *argv[])
                                   break;
                        case '4' : fra[position].dir_flag ^= DIR_DISABLED;
                                   break;
-#ifdef NEW_FRA
                        case '5' : fra[position].dir_options ^= ACCEPT_DOT_FILES;
-#else
-                       case '5' : fra[position].dir_flag ^= ACCEPT_DOT_FILES;
-#endif
                                   break;
-#ifdef NEW_FRA
                        case '6' : fra[position].dir_options ^= DONT_GET_DIR_LIST;
-#else
-                       case '6' : fra[position].dir_flag ^= DONT_GET_DIR_LIST;
-#endif
                                   break;
                        case '7' : fra[position].dir_flag ^= DIR_ERROR_SET;
                                   break;
@@ -317,7 +293,6 @@ main(int argc, char *argv[])
                        case 'd' : fra[position].dir_flag ^= DIR_STOPPED;
                                   break;
 #ifdef WITH_INOTIFY
-# ifdef NEW_FRA
                        case 'e' : fra[position].dir_options ^= INOTIFY_RENAME;
                                   break;
                        case 'f' : fra[position].dir_options ^= INOTIFY_CLOSE;
@@ -326,18 +301,10 @@ main(int argc, char *argv[])
                                   break;
                        case 'h' : fra[position].dir_options ^= INOTIFY_DELETE;
                                   break;
-# else
-                       case 'e' : fra[position].dir_flag ^= INOTIFY_RENAME;
+                       case 'i' : fra[position].dir_options ^= INOTIFY_ATTRIB;
                                   break;
-                       case 'f' : fra[position].dir_flag ^= INOTIFY_CLOSE;
-                                  break;
-                       case 'g' : fra[position].dir_flag ^= INOTIFY_CREATE;
-                                  break;
-                       case 'h' : fra[position].dir_flag ^= INOTIFY_DELETE;
-                                  break;
-# endif
 #endif
-                       case 'i' : fra[position].dir_flag ^= ALL_DISABLED;
+                       case 'j' : fra[position].dir_flag ^= ALL_DISABLED;
                                   break;
                        case 'Z' : break;
                        default  : (void)printf(_("Wrong choice!\n"));

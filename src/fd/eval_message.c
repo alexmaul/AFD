@@ -1,6 +1,6 @@
 /*
  *  eval_message.c - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 1995 - 2020 Deutscher Wetterdienst (DWD),
+ *  Copyright (c) 1995 - 2023 Deutscher Wetterdienst (DWD),
  *                            Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
@@ -95,6 +95,7 @@ DESCR__S_M3
  **   06.07.2019 H.Kiehl Added support for trans_srename.
  **   22.06.2020 H.Kiehl Added option 'show no to line'.
  **   29.06.2020 H.Kiehl Added option 'group-to'.
+ **   29.06.2023 H.Kiehl Ignore FD option 'ageing'.
  **
  */
 DESCR__E_M3
@@ -184,6 +185,8 @@ static char *store_mail_address(char *, char **, char *, unsigned int);
 #define SILENT_DEF_NO_LOCK_FLAG     1024
 #define TRANS_SRENAME_FLAG          2048
 #define GROUP_TO_FLAG               4096
+#define REMOTE_HARDLINK_FLAG        8192
+#define REMOTE_SYMLINK_FLAG         16384
 
 
 #define MAX_HUNK                    4096
@@ -1092,6 +1095,164 @@ eval_message(char *message_name, struct job *p_db)
                        ptr++;
                     }
                  }
+            else if (((used2 & REMOTE_HARDLINK_FLAG) == 0) &&
+                     (CHECK_STRNCMP(ptr, REMOTE_HARDLINK_ID,
+                                    REMOTE_HARDLINK_ID_LENGTH) == 0))
+                 {
+                    int length = 0,
+                        max_length = 0;
+
+                    used2 |= REMOTE_HARDLINK_FLAG;
+                    ptr += REMOTE_HARDLINK_ID_LENGTH;
+                    while ((*ptr == ' ') || (*ptr == '\t'))
+                    {
+                       ptr++;
+                    }
+
+                    /*
+                     * First determine the number of file names and the
+                     * length of the longest file name, so we can allocate
+                     * the necessary memory.
+                     */
+                    p_db->no_of_rhardlinks = 0;
+                    end_ptr = ptr;
+                    while ((*end_ptr != '\n') && (*end_ptr != '\0'))
+                    {
+                      if (*end_ptr == ' ')
+                      {
+                         if ((end_ptr != ptr) && (*(end_ptr - 1) == '\\'))
+                         {
+                            /* Name with space. */;
+                         }
+                         else
+                         {
+                            *end_ptr = '\0';
+                            p_db->no_of_rhardlinks++;
+                            if (length > max_length)
+                            {
+                               max_length = length;
+                            }
+                         }
+                      }
+                      end_ptr++;
+                      length++;
+                    }
+                    if (length > max_length)
+                    {
+                       max_length = length;
+                    }
+                    if (max_length > 0)
+                    {
+                       int  i, j;
+                       char tmp_char = *end_ptr;
+
+                       *end_ptr = '\0';
+                       p_db->no_of_rhardlinks++;
+                       max_length++;
+                       RT_ARRAY(p_db->hardlinks, p_db->no_of_rhardlinks,
+                                max_length, char);
+
+                       for (i = 0; i < p_db->no_of_rhardlinks; i++)
+                       {
+                          j = 0;
+                          while ((j < max_length) && (*ptr != '\0'))
+                          {
+                             if (*ptr == '\\')
+                             {
+                                ptr++;
+                             }
+                             else
+                             {
+                                p_db->hardlinks[i][j] = *ptr;
+                                ptr++; j++;
+                             }
+                          }
+                          p_db->hardlinks[i][j] = '\0';
+                          ptr++;
+                       }
+                       *end_ptr = tmp_char;
+                    }
+                    ptr = end_ptr + 1;
+                 }
+            else if (((used2 & REMOTE_SYMLINK_FLAG) == 0) &&
+                     (CHECK_STRNCMP(ptr, REMOTE_SYMLINK_ID,
+                                    REMOTE_SYMLINK_ID_LENGTH) == 0))
+                 {
+                    int length = 0,
+                        max_length = 0;
+
+                    used2 |= REMOTE_SYMLINK_FLAG;
+                    ptr += REMOTE_SYMLINK_ID_LENGTH;
+                    while ((*ptr == ' ') || (*ptr == '\t'))
+                    {
+                       ptr++;
+                    }
+
+                    /*
+                     * First determine the number of file names and the
+                     * length of the longest file name, so we can allocate
+                     * the necessary memory.
+                     */
+                    p_db->no_of_rsymlinks = 0;
+                    end_ptr = ptr;
+                    while ((*end_ptr != '\n') && (*end_ptr != '\0'))
+                    {
+                      if (*end_ptr == ' ')
+                      {
+                         if ((end_ptr != ptr) && (*(end_ptr - 1) == '\\'))
+                         {
+                            /* Name with space. */;
+                         }
+                         else
+                         {
+                            *end_ptr = '\0';
+                            p_db->no_of_rsymlinks++;
+                            if (length > max_length)
+                            {
+                               max_length = length;
+                            }
+                         }
+                      }
+                      end_ptr++;
+                      length++;
+                    }
+                    if (length > max_length)
+                    {
+                       max_length = length;
+                    }
+                    if (max_length > 0)
+                    {
+                       char tmp_char = *end_ptr;
+                       int  i, j;
+
+                       *end_ptr = '\0';
+                       p_db->no_of_rsymlinks++;
+                       max_length++;
+                       RT_ARRAY(p_db->symlinks, p_db->no_of_rsymlinks,
+                                max_length, char);
+
+                       for (i = 0; i < p_db->no_of_rsymlinks; i++)
+                       {
+                          j = 0;
+                          while ((j < max_length) && (*ptr != '\0'))
+                          {
+                             if (*ptr == '\\')
+                             {
+                                ptr++;
+                             }
+                             else
+                             {
+                                p_db->symlinks[i][j] = *ptr;
+                                ptr++; j++;
+                             }
+                          }
+                          p_db->symlinks[i][j] = '\0';
+                          ptr++;
+                       }
+                       *end_ptr = tmp_char;
+                    }
+                    ptr = end_ptr + 1;
+                 }
             else if (((used & RESTART_FILE_FLAG) == 0) &&
                      (CHECK_STRNCMP(ptr, RESTART_FILE_ID,
                                     RESTART_FILE_ID_LENGTH) == 0))
@@ -1134,7 +1295,8 @@ eval_message(char *message_name, struct job *p_db)
                     if (max_length > 0)
                     {
                        int  i;
-                       char *tmp_ptr;
+                       char tmp_char = *end_ptr,
+                            *tmp_ptr;
 
                        *end_ptr = '\0';
                        p_db->no_of_restart_files++;
@@ -1171,8 +1333,17 @@ eval_message(char *message_name, struct job *p_db)
                           }
                           NEXT(ptr);
                        }
+                       *end_ptr = tmp_char;
                     }
                     ptr = end_ptr;
+                    while ((*ptr != '\n') && (*ptr != '\0'))
+                    {
+                       ptr++;
+                    }
+                    while (*ptr == '\n')
+                    {
+                       ptr++;
+                    }
                  }
 #ifdef WITH_DUP_CHECK
             else if (((used & DUPCHECK_FLAG) == 0) &&
@@ -1326,8 +1497,10 @@ eval_message(char *message_name, struct job *p_db)
                                }
                                tmp_char = *ptr;
                                *ptr = '\0';
-                               if ((length = read_file(file_name,
-                                                       &p_db->subject)) != INCORRECT)
+                               if ((length = read_file_no_cr(file_name,
+                                                             &p_db->subject,
+                                                             NO, __FILE__,
+                                                             __LINE__)) != INCORRECT)
                                {
                                   p_db->special_flag |= MAIL_SUBJECT;
                                   if (p_db->subject[length - 1] == '\n')
@@ -2675,16 +2848,30 @@ eval_message(char *message_name, struct job *p_db)
                           }
                           else
                           {
-                             char        config_file[MAX_PATH_LENGTH];
-                             struct stat stat_buf;
+                             char         config_file[MAX_PATH_LENGTH];
+#  ifdef HAVE_STATX
+                             struct statx stat_buf;
+#  else
+                             struct stat  stat_buf;
+#  endif
 
                              (void)snprintf(config_file, MAX_PATH_LENGTH,
                                             "%s%s%s", p_work_dir, ETC_DIR,
                                             AFD_CONFIG_FILE);
                              if ((eaccess(config_file, F_OK) == 0) &&
-                                 (stat(config_file, &stat_buf) == 0))
+#  ifdef HAVE_STATX
+                                 (statx(0, config_file, AT_STATX_SYNC_AS_STAT,
+                                        STATX_MTIME, &stat_buf) == 0)
+#  else
+                                 (stat(config_file, &stat_buf) == 0)
+#  endif
+                                )
                              {
+#  ifdef HAVE_STATX
+                                if (stat_buf.stx_mtime.tv_sec != p_db->afd_config_mtime)
+#  else
                                 if (stat_buf.st_mtime != p_db->afd_config_mtime)
+#  endif
                                 {
                                    char *buffer = NULL;
 
@@ -2693,7 +2880,11 @@ eval_message(char *message_name, struct job *p_db)
                                    {
                                       char value[MAX_INT_LENGTH + 1];
 
+#  ifdef HAVE_STATX
+                                      p_db->afd_config_mtime = stat_buf.stx_mtime.tv_sec;
+#  else
                                       p_db->afd_config_mtime = stat_buf.st_mtime;
+#  endif
                                       if (get_definition(buffer, EXEC_BASE_PRIORITY_DEF,
                                                          value, MAX_INT_LENGTH) != NULL)
                                       {
@@ -2832,6 +3023,19 @@ eval_message(char *message_name, struct job *p_db)
                     p_db->rcvbuf_size = atoi(ptr);
                     *end_ptr = byte_buf;
                     ptr = end_ptr;
+                    while (*ptr == '\n')
+                    {
+                       ptr++;
+                    }
+                 }
+            else if (CHECK_STRNCMP(ptr, AGEING_ID, AGEING_ID_LENGTH) == 0)
+                 {
+                    /* This option is for process FD, so ignore it. */
+                    ptr += AGEING_ID_LENGTH;
+                    while ((*ptr != '\n') && (*ptr != '\0'))
+                    {
+                       ptr++;
+                    }
                     while (*ptr == '\n')
                     {
                        ptr++;

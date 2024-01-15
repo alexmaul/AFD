@@ -1,7 +1,7 @@
 /*
  *  get_remote_file_names_http.c - Part of AFD, an automatic file distribution
  *                                 program.
- *  Copyright (c) 2006 - 2022 Holger Kiehl <Holger.Kiehl@dwd.de>
+ *  Copyright (c) 2006 - 2024 Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -50,6 +50,9 @@ DESCR__S_M3
  **                      assume http_head() will always return the
  **                      seconds. Lets, see how this works and if
  **                      it increases the HEAD calls, remove it.
+ **   29.10.2022 H.Kiehl Added support for downloadLinkArea listing.
+ **   30.06.2023 H.Kiehl Added support for contentDiv listing.
+ **   13.01.2024 H.Kiehl Added 'not exact' part for once.
  **
  */
 DESCR__E_M3
@@ -289,11 +292,7 @@ get_remote_file_names_http(off_t *file_size_to_retrieve,
        i = 0;
 
    *file_size_to_retrieve = 0;
-#ifdef NEW_FRA
    if (fra->dir_options & URL_CREATES_FILE_NAME)
-#else
-   if (fra->dir_flag & URL_CREATES_FILE_NAME)
-#endif
    {
       /* Add this file to the list. */
       if (rl_fd == -1)
@@ -519,7 +518,7 @@ try_attach_again:
 
                   if ((fra->ignore_size == -1) ||
                       ((fra->gt_lt_sign & ISIZE_EQUAL) &&
-                       (fra->ignore_size == rl[i].size)) ||
+                       (fra->ignore_size != rl[i].size)) ||
                       ((fra->gt_lt_sign & ISIZE_LESS_THEN) &&
                        (fra->ignore_size < rl[i].size)) ||
                       ((fra->gt_lt_sign & ISIZE_GREATER_THEN) &&
@@ -541,11 +540,7 @@ try_attach_again:
                               *file_size_to_retrieve += rl[i].size;
                            }
                         }
-#ifdef NEW_FRA
                         if (((fra->dir_options & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#else
-                        if (((fra->dir_flag & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#endif
                             (db.special_flag & DISTRIBUTED_HELPER_JOB))
                         {
                            rl[i].assigned = (unsigned char)db.job_no + 1;
@@ -561,7 +556,7 @@ try_attach_again:
 
                         diff_time = current_time - rl[i].file_mtime;
                         if (((fra->gt_lt_sign & IFTIME_EQUAL) &&
-                             (fra->ignore_file_time == diff_time)) ||
+                             (fra->ignore_file_time != diff_time)) ||
                             ((fra->gt_lt_sign & IFTIME_LESS_THEN) &&
                              (fra->ignore_file_time < diff_time)) ||
                             ((fra->gt_lt_sign & IFTIME_GREATER_THEN) &&
@@ -580,11 +575,7 @@ try_attach_again:
                                  *file_size_to_retrieve += rl[i].size;
                               }
                            }
-#ifdef NEW_FRA
                            if (((fra->dir_options & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#else
-                           if (((fra->dir_flag & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#endif
                                (db.special_flag & DISTRIBUTED_HELPER_JOB))
                            {
                               rl[i].assigned = (unsigned char)db.job_no + 1;
@@ -747,11 +738,7 @@ try_attach_again:
        * listing. This can be done by setting the diretory option
        * 'do not get dir list' in DIR_CONFIG.
        */
-#ifdef NEW_FRA
       if ((fra->dir_options & DONT_GET_DIR_LIST) == 0)
-#else
-      if ((fra->dir_flag & DONT_GET_DIR_LIST) == 0)
-#endif
       {
          int          listing_complete = YES;
          unsigned int files_deleted = 0,
@@ -768,34 +755,53 @@ try_attach_again:
          do
          {
             bytes_buffered = 0;
-            content_length = 0;
+            content_length = -1;
 #ifdef _WITH_EXTRA_CHECK
             etag[0] = '\0';
 #endif
-            if (((status = http_get(db.target_dir, "", NULL,
+            if (((status = http_get(db.target_dir,
+                                    (db.index_file == NULL) ? "" : db.index_file,
+                                    NULL,
 #ifdef _WITH_EXTRA_CHECK
                                     etag,
 #endif
                                     &content_length, 0)) != SUCCESS) &&
                 (status != CHUNKED))
             {
-#ifdef RESET_LS_DATA_ON_ERROR
-               if (!((timeout_flag == ON) || (timeout_flag == CON_RESET) ||
-                     (timeout_flag == CON_REFUSED)))
+               /*
+                * If target_dir is one with date, do not show this
+                * as an error if the directory does not exist. User
+                * might want to scan as early as possible.
+                */
+               if ((db.special_flag & PATH_MAY_CHANGE) && (status == 404))
                {
-                  if (reset_ls_data() != SUCCESS)
-                  {
-                     http_quit();
-                     exit(INCORRECT);
-                  }
+                  trans_log(INFO_SIGN, __FILE__, __LINE__, NULL, msg_str,
+                            "Failed to open remote directory %s (%d).",
+                            db.target_dir, status);
+                  http_quit();
+                  exitflag = 0;
+                  exit(TRANSFER_SUCCESS);
                }
+               else
+               {
+#ifdef RESET_LS_DATA_ON_ERROR
+                  if (!((timeout_flag == ON) || (timeout_flag == CON_RESET) ||
+                        (timeout_flag == CON_REFUSED)))
+                  {
+                     if (reset_ls_data() != SUCCESS)
+                     {
+                        http_quit();
+                        exit(INCORRECT);
+                     }
+                  }
 #endif
-               trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL,
-                         (status == INCORRECT) ? NULL : msg_str,
-                         "Failed to open remote directory %s (%d).",
-                         db.target_dir, status);
-               http_quit();
-               exit(eval_timeout(OPEN_REMOTE_ERROR));
+                  trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL,
+                            (status == INCORRECT) ? NULL : msg_str,
+                            "Failed to open remote directory %s (%d).",
+                            db.target_dir, status);
+                  http_quit();
+                  exit(eval_timeout(OPEN_REMOTE_ERROR));
+               }
             }
             if (fsa->debug > NORMAL_MODE)
             {
@@ -848,36 +854,43 @@ try_attach_again:
                   {
                      read_length = content_length - bytes_buffered;
                   }
-                  if ((status = http_read(&listbuffer[bytes_buffered],
-                                          read_length)) == INCORRECT)
+                  if (read_length > 0)
                   {
-                     trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL,
-                               (status > 0) ? NULL : msg_str,
-                               "Failed to read from remote directory listing for %s (%d)",
-                               db.target_dir, status);
-                     free(listbuffer);
-                     http_quit();
-                     exit(eval_timeout(READ_REMOTE_ERROR));
-                  }
-                  else if (status > 0)
-                       {
-                          bytes_buffered += status;
-                          if (bytes_buffered == content_length)
+                     if ((status = http_read(&listbuffer[bytes_buffered],
+                                             read_length)) == INCORRECT)
+                     {
+                        trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL,
+                                  (status > 0) ? msg_str : NULL,
+                                  "Failed to read from remote directory listing for %s (%d)",
+                                  db.target_dir, status);
+                        free(listbuffer);
+                        http_quit();
+                        exit(eval_timeout(READ_REMOTE_ERROR));
+                     }
+                     else if (status > 0)
                           {
-                             status = 0;
-                          }
-                          else if (bytes_buffered > content_length)
-                               {
-                                  trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
+                             bytes_buffered += status;
+                             if (bytes_buffered == content_length)
+                             {
+                                status = 0;
+                             }
+                             else if (bytes_buffered > content_length)
+                                  {
+                                     trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
 #if SIZEOF_OFF_T == 4
-                                             "Maximum directory buffer length (%ld bytes) reached.",
+                                                "Maximum directory buffer length (%ld bytes) reached.",
 #else
-                                             "Maximum directory buffer length (%lld bytes) reached.",
+                                                "Maximum directory buffer length (%lld bytes) reached.",
 #endif
-                                             (pri_off_t)content_length);
-                                  status = 0;
-                               }
-                       }
+                                                (pri_off_t)content_length);
+                                     status = 0;
+                                  }
+                          }
+                  }
+                  else
+                  {
+                     status = 0;
+                  }
                } while (status != 0);
             }
             else /* status == CHUNKED */
@@ -897,14 +910,14 @@ try_attach_again:
                do
                {
                   if ((status = http_chunk_read(&chunkbuffer,
-                                                &chunksize)) == INCORRECT)
+                                                &chunksize)) < 0)
                   {
                      trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL,
                                (status == INCORRECT) ? NULL : msg_str,
                                "Failed to read from remote directory listing for %s",
                                db.target_dir);
-                     free(chunkbuffer);
                      http_quit();
+                     free(chunkbuffer);
                      exit(eval_timeout(READ_REMOTE_ERROR));
                   }
                   else if (status > 0)
@@ -916,8 +929,8 @@ try_attach_again:
                                 system_log(ERROR_SIGN, __FILE__, __LINE__,
                                            "Failed to malloc() %d bytes : %s",
                                            status, strerror(errno));
-                                free(chunkbuffer);
                                 http_quit();
+                                free(chunkbuffer);
                                 exit(ALLOC_ERROR);
                              }
                           }
@@ -954,11 +967,13 @@ try_attach_again:
                                 exit(ALLOC_ERROR);
                              }
                           }
-                          (void)memcpy(&listbuffer[bytes_buffered], chunkbuffer,
-                                       status);
+                          (void)memcpy(&listbuffer[bytes_buffered],
+                                       chunkbuffer, status);
                           bytes_buffered += status;
                        }
                } while (status != HTTP_LAST_CHUNK);
+
+               free(chunkbuffer);
 
                if ((listbuffer = realloc(listbuffer, bytes_buffered + 1)) == NULL)
                {
@@ -969,12 +984,9 @@ try_attach_again:
                              "Failed to realloc() %lld bytes : %s",
 #endif
                              (pri_off_t)(bytes_buffered + 1), strerror(errno));
-                  free(chunkbuffer);
                   http_quit();
                   exit(ALLOC_ERROR);
                }
-
-               free(chunkbuffer);
             }
 
             if (bytes_buffered > 0)
@@ -1271,9 +1283,235 @@ eval_html_dir_list(char         *html_buffer,
             if ((ptr = llposi(html_buffer, (size_t)bytes_buffered,
                               "<?xml version=\"", 15)) == NULL)
             {
-               trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
-                         "Unknown HTML directory listing. Please send author a link so that this can be implemented.");
-               return(INCORRECT);
+               if ((ptr = llposi(html_buffer, (size_t)bytes_buffered,
+                                 "<div id=\"downloadLinkArea\">",
+                                 27)) == NULL)
+               {
+                  if ((ptr = llposi(html_buffer, (size_t)bytes_buffered,
+                                    "<div id=\"contentDiv\">",
+                                    21)) == NULL)
+                  {
+                     trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
+                               "Unknown HTML directory listing. Please send author a link so that this can be implemented.");
+                     return(INCORRECT);
+                  }
+                  else
+                  {
+                     int    exact_date = -1,
+                            file_name_length = -1;
+                     off_t  exact_size,
+                            file_size = -1;
+                     time_t file_mtime = -1;
+                     char   date_str[MAX_FILENAME_LENGTH],
+                            *end_ptr = html_buffer + bytes_buffered,
+                            file_name[MAX_FILENAME_LENGTH];
+
+                     while ((*ptr == '\n') || (*ptr == '\r'))
+                     {
+                        ptr++;
+                     }
+
+                     while ((ptr = llposi(ptr, bytes_buffered,
+                                          "<a href=\"", 9)) != NULL)
+                     {
+                        ptr--;
+                        file_name_length = 0;
+                        if (*ptr == '/')
+                        {
+                           ptr += 1;
+                        }
+                        while ((*ptr != '"') && (*ptr != '\n') &&
+                               (*ptr != '\r') && (*ptr != '\0'))
+                        {
+                           ptr++;
+                        }
+                        if (*ptr == '"')
+                        {
+                           ptr++;
+                           if (*ptr == '>')
+                           {
+                              ptr++;
+                              STORE_HTML_STRING(file_name, file_name_length,
+                                                MAX_FILENAME_LENGTH, '<');
+                              if (*ptr == '<')
+                              {
+                                 while (*ptr == '<')
+                                 {
+                                    ptr++;
+                                    while ((*ptr != '>') && (*ptr != '\n') &&
+                                           (*ptr != '\r') && (*ptr != '\0'))
+                                    {
+                                       ptr++;
+                                    }
+                                    if (*ptr == '>')
+                                    {
+                                       ptr++;
+                                       while (*ptr == ' ')
+                                       {
+                                          ptr++;
+                                       }
+                                    }
+                                 }
+                              }
+                              if ((*ptr != '\n') && (*ptr != '\r') &&
+                                  (*ptr != '\0'))
+                              {
+                                 while (*ptr == ' ')
+                                 {
+                                    ptr++;
+                                 }
+
+                                 /* Store date string. */
+                                 if ((isdigit((int)(*ptr)) != 0) &&
+                                     (isdigit((int)(*(ptr + 15))) != 0) &&
+                                     (*(ptr + 16) == ' '))
+                                 {
+                                    int i = 0;
+
+                                    memcpy(date_str, ptr, 16);
+                                    date_str[16] = '\0';
+                                    file_mtime = datestr2unixtime(date_str,
+                                                                  &exact_date);
+                                    ptr += 16;
+                                    while (*ptr == ' ')
+                                    {
+                                       ptr++;
+                                    }
+                                    while ((i < MAX_FILENAME_LENGTH) &&
+                                           (isdigit((int)(*ptr)) != 0))
+                                    {
+                                       date_str[i] = *ptr;
+                                       ptr++; i++;
+                                    }
+                                    if (i > 0)
+                                    {
+                                       date_str[i] = '\0';
+                                       file_size = (off_t)str2offt(date_str, NULL, 10);
+                                       exact_size = 1;
+                                    }
+                                 }
+                              }
+                              else
+                              {
+                                 break;
+                              }
+                           }
+                           else
+                           {
+                              break;
+                           }
+                        }
+                        else
+                        {
+                           break;
+                        }
+                        if (fsa->debug > DEBUG_MODE)
+                        {
+                           trans_db_log(DEBUG_SIGN, NULL, 0, NULL,
+#if SIZEOF_OFF_T == 4
+# if SIZEOF_TIME_T == 4
+                                        "eval_html_dir_list(): filename=%s length=%d mtime=%ld exact=%d size=%ld exact=%ld",
+# else
+                                        "eval_html_dir_list(): filename=%s length=%d mtime=%lld exact=%d size=%ld exact=%ld",
+# endif
+#else
+# if SIZEOF_TIME_T == 4
+                                        "eval_html_dir_list(): filename=%s length=%d mtime=%ld exact=%d size=%lld exact=%lld",
+# else
+                                        "eval_html_dir_list(): filename=%s length=%d mtime=%lld exact=%d size=%lld exact=%lld",
+# endif
+#endif
+                                        file_name, file_name_length,
+                                        (pri_time_t)file_mtime, exact_date,
+                                        (pri_off_t)file_size,
+                                        (pri_off_t)exact_size);
+                        }
+
+                        (*list_length)++;
+                        if (file_size > 0)
+                        {
+                           (*list_size) += file_size;
+                        }
+                        if (check_name(file_name, file_name_length,
+                                       file_size, file_mtime, files_deleted,
+                                       file_size_deleted) == YES)
+                        {
+                           (void)check_list(file_name, file_name_length,
+                                            file_mtime, exact_date,
+                                            exact_size, file_size,
+                                            files_to_retrieve,
+                                            file_size_to_retrieve,
+                                            more_files_in_list);
+                        }
+                        else
+                        {
+                           file_name[0] = '\0';
+                        }
+
+                        bytes_buffered = end_ptr - ptr;
+                     } /* while "<a href=" */
+                  }
+               }
+               else
+               {
+                  int  file_name_length;
+                  char *end_ptr = html_buffer + bytes_buffered,
+                       file_name[MAX_FILENAME_LENGTH];
+
+                  while ((*ptr == '\n') || (*ptr == '\r'))
+                  {
+                     ptr++;
+                  }
+
+                  /* Ignore next line. */
+                  while ((*ptr != '\n') && (*ptr != '\r') && (*ptr != '\0'))
+                  {
+                     ptr++;
+                  }
+                  while ((*ptr == '\n') || (*ptr == '\r'))
+                  {
+                     ptr++;
+                  }
+
+                  while ((ptr = llposi(ptr, (size_t)bytes_buffered,
+                                       "<a href=\"", 9)) != NULL)
+                  {
+                     ptr--;
+                     file_name_length = 0;
+                     if ((*ptr == '.') && (*(ptr + 1) == '/'))
+                     {
+                        ptr += 2;
+                     }
+
+                     /* Store file name. */
+                     STORE_HTML_STRING(file_name, file_name_length,
+                                       MAX_FILENAME_LENGTH, '"');
+
+                     if (fsa->debug > DEBUG_MODE)
+                     {
+                        trans_db_log(DEBUG_SIGN, NULL, 0, NULL,
+                                     "eval_html_dir_list(): filename=%s length=%d mtime=-1 exact=%d size=-1 exact=-1",
+                                     file_name, file_name_length, DS2UT_NONE);
+                     }
+
+                     (*list_length)++;
+                     if (check_name(file_name, file_name_length,
+                                    -1, -1, files_deleted,
+                                    file_size_deleted) != YES)
+                     {
+                        file_name[0] = '\0';
+                     }
+                     else
+                     {
+                        (void)check_list(file_name, file_name_length,
+                                         -1, DS2UT_NONE, -1,
+                                         -1, files_to_retrieve,
+                                         file_size_to_retrieve,
+                                         more_files_in_list);
+                     }
+                     bytes_buffered = end_ptr - ptr;
+                  } /* while "<a href=" */
+               }
             }
             else
             {
@@ -1425,13 +1663,22 @@ eval_html_dir_list(char         *html_buffer,
                                              trans_db_log(DEBUG_SIGN, NULL, 0,
                                                           NULL,
 #if SIZEOF_OFF_T == 4
+# if SIZEOF_TIME_T == 4
+                                                          "eval_html_dir_list(): filename=%s length=%d mtime=%ld exact=%d size=%ld exact=%ld",
+# else
                                                           "eval_html_dir_list(): filename=%s length=%d mtime=%lld exact=%d size=%ld exact=%ld",
+# endif
 #else
+# if SIZEOF_TIME_T == 4
+                                                          "eval_html_dir_list(): filename=%s length=%d mtime=%ld exact=%d size=%lld exact=%lld",
+# else
                                                           "eval_html_dir_list(): filename=%s length=%d mtime=%lld exact=%d size=%lld exact=%lld",
+# endif
 #endif
                                                           file_name,
                                                           file_name_length,
-                                                          file_mtime, exact_date,
+                                                          (pri_time_t)file_mtime,
+                                                          exact_date,
                                                           (pri_off_t)file_size,
                                                           (pri_off_t)exact_size);
                                           }
@@ -1744,11 +1991,20 @@ eval_html_dir_list(char         *html_buffer,
                      {
                         trans_db_log(DEBUG_SIGN, NULL, 0, NULL,
 #if SIZEOF_OFF_T == 4
+# if SIZEOF_TIME_T == 4
+                                     "eval_html_dir_list(): filename=%s length=%d mtime=%ld exact=%d size=%ld exact=%ld",
+# else
                                      "eval_html_dir_list(): filename=%s length=%d mtime=%lld exact=%d size=%ld exact=%ld",
+# endif
 #else
+# if SIZEOF_TIME_T == 4
+                                     "eval_html_dir_list(): filename=%s length=%d mtime=%ld exact=%d size=%lld exact=%lld",
+# else
                                      "eval_html_dir_list(): filename=%s length=%d mtime=%lld exact=%d size=%lld exact=%lld",
+# endif
 #endif
-                                     file_name, file_name_length, file_mtime,
+                                     file_name, file_name_length,
+                                     (pri_time_t)file_mtime,
                                      exact_date, (pri_off_t)file_size,
                                      (pri_off_t)exact_size);
                      }
@@ -2046,12 +2302,20 @@ eval_html_dir_list(char         *html_buffer,
                            {
                               trans_db_log(DEBUG_SIGN, NULL, 0, NULL,
 #if SIZEOF_OFF_T == 4
+# if SIZEOF_TIME_T == 4
+                                           "eval_html_dir_list(): filename=%s length=%d mtime=%ld exact=%d size=%ld exact=%ld",
+# else
                                            "eval_html_dir_list(): filename=%s length=%d mtime=%lld exact=%d size=%ld exact=%ld",
+# endif
 #else
+# if SIZEOF_TIME_T == 4
+                                           "eval_html_dir_list(): filename=%s length=%d mtime=%ld exact=%d size=%lld exact=%lld",
+# else
                                            "eval_html_dir_list(): filename=%s length=%d mtime=%lld exact=%d size=%lld exact=%lld",
+# endif
 #endif
                                            file_name, file_name_length,
-                                           file_mtime, exact_date,
+                                           (pri_time_t)file_mtime, exact_date,
                                            (pri_off_t)file_size,
                                            (pri_off_t)exact_size);
                            }
@@ -2287,12 +2551,20 @@ eval_html_dir_list(char         *html_buffer,
                           {
                              trans_db_log(DEBUG_SIGN, NULL, 0, NULL,
 #if SIZEOF_OFF_T == 4
+# if SIZEOF_TIME_T == 4
+                                          "eval_html_dir_list(): filename=%s length=%d mtime=%ld exact=%d size=%ld exact=%ld",
+# else
                                           "eval_html_dir_list(): filename=%s length=%d mtime=%lld exact=%d size=%ld exact=%ld",
+# endif
 #else
+# if SIZEOF_TIME_T == 4
+                                          "eval_html_dir_list(): filename=%s length=%d mtime=%ld exact=%d size=%lld exact=%lld",
+# else
                                           "eval_html_dir_list(): filename=%s length=%d mtime=%lld exact=%d size=%lld exact=%lld",
+# endif
 #endif
                                           file_name, file_name_length,
-                                          file_mtime, exact_date,
+                                          (pri_time_t)file_mtime, exact_date,
                                           (pri_off_t)file_size,
                                           (pri_off_t)exact_size);
                           }
@@ -2390,12 +2662,20 @@ eval_html_dir_list(char         *html_buffer,
                              {
                                 trans_db_log(DEBUG_SIGN, NULL, 0, NULL,
 #if SIZEOF_OFF_T == 4
+# if SIZEOF_TIME_T == 4
+                                             "eval_html_dir_list(): filename=%s length=%d mtime=%ld exact=%d size=%ld exact=%ld",
+# else
                                              "eval_html_dir_list(): filename=%s length=%d mtime=%lld exact=%d size=%ld exact=%ld",
+# endif
 #else
+# if SIZEOF_TIME_T == 4
+                                             "eval_html_dir_list(): filename=%s length=%d mtime=%ld exact=%d size=%lld exact=%lld",
+# else
                                              "eval_html_dir_list(): filename=%s length=%d mtime=%lld exact=%d size=%lld exact=%lld",
+# endif
 #endif
                                              file_name, file_name_length,
-                                             file_mtime, exact_date,
+                                             (pri_time_t)file_mtime, exact_date,
                                              (pri_off_t)file_size,
                                              (pri_off_t)exact_size);
                              }
@@ -2518,11 +2798,7 @@ check_list(char   *file,
 
                if (((file_mtime == -1) || (exact_date != DS2UT_SECOND)) &&
                    (fra->ignore_file_time != 0) &&
-#ifdef NEW_FRA
                    ((fra->dir_options & DONT_GET_DIR_LIST) == 0))
-#else
-                   ((fra->dir_flag & DONT_GET_DIR_LIST) == 0))
-#endif
                {
                   int status;
 
@@ -2577,7 +2853,7 @@ check_list(char   *file,
 
                if ((fra->ignore_size == -1) ||
                    ((fra->gt_lt_sign & ISIZE_EQUAL) &&
-                    (fra->ignore_size == rl[i].size)) ||
+                    (fra->ignore_size != rl[i].size)) ||
                    ((fra->gt_lt_sign & ISIZE_LESS_THEN) &&
                     (fra->ignore_size < rl[i].size)) ||
                    ((fra->gt_lt_sign & ISIZE_GREATER_THEN) &&
@@ -2600,11 +2876,7 @@ check_list(char   *file,
 #endif
                      {
                         rl[i].retrieved = NO;
-#ifdef NEW_FRA
                         if (((fra->dir_options & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#else
-                        if (((fra->dir_flag & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#endif
                             (db.special_flag & DISTRIBUTED_HELPER_JOB))
                         {
                            rl[i].assigned = (unsigned char)db.job_no + 1;
@@ -2633,7 +2905,7 @@ check_list(char   *file,
 
                      diff_time = current_time - rl[i].file_mtime;
                      if (((fra->gt_lt_sign & IFTIME_EQUAL) &&
-                          (fra->ignore_file_time == diff_time)) ||
+                          (fra->ignore_file_time != diff_time)) ||
                          ((fra->gt_lt_sign & IFTIME_LESS_THEN) &&
                           (fra->ignore_file_time < diff_time)) ||
                          ((fra->gt_lt_sign & IFTIME_GREATER_THEN) &&
@@ -2655,11 +2927,7 @@ check_list(char   *file,
 #endif
                         {
                            rl[i].retrieved = NO;
-#ifdef NEW_FRA
                            if (((fra->dir_options & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#else
-                           if (((fra->dir_flag & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#endif
                                (db.special_flag & DISTRIBUTED_HELPER_JOB))
                            {
                               rl[i].assigned = (unsigned char)db.job_no + 1;
@@ -2730,17 +2998,14 @@ check_list(char   *file,
             cached_i = i;
             rl[i].in_list = YES;
             if ((rl[i].assigned != 0) ||
-                ((fra->stupid_mode == GET_ONCE_ONLY) &&
-                 ((rl[i].special_flag & RL_GOT_EXACT_SIZE_DATE) ||
+                (((fra->stupid_mode == GET_ONCE_ONLY) ||
+                  (fra->stupid_mode == GET_ONCE_NOT_EXACT)) &&
+                 ((rl[i].special_flag & RL_GOT_SIZE_DATE) ||
                   (rl[i].retrieved == YES))))
             {
                if ((rl[i].retrieved == NO) && (rl[i].assigned == 0))
                {
-#ifdef NEW_FRA
                   if (((fra->dir_options & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#else
-                  if (((fra->dir_flag & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#endif
                       (db.special_flag & DISTRIBUTED_HELPER_JOB))
                   {
                      rl[i].assigned = (unsigned char)db.job_no + 1;
@@ -2767,11 +3032,8 @@ check_list(char   *file,
                off_t prev_size = 0;
 
                /* Try to get remote date and size. */
-#ifdef NEW_FRA
                if (((fra->dir_options & DONT_GET_DIR_LIST) == 0) &&
-#else
-               if (((fra->dir_flag & DONT_GET_DIR_LIST) == 0) &&
-#endif
+                   (fra->stupid_mode != GET_ONCE_NOT_EXACT) &&
                    ((file_mtime == -1) || (exact_date != DS2UT_SECOND) ||
                     (file_size == -1) || (exact_size != 1)))
                {
@@ -2852,7 +3114,7 @@ check_list(char   *file,
                {
                   if ((fra->ignore_size == -1) ||
                       ((fra->gt_lt_sign & ISIZE_EQUAL) &&
-                       (fra->ignore_size == rl[i].size)) ||
+                       (fra->ignore_size != rl[i].size)) ||
                       ((fra->gt_lt_sign & ISIZE_LESS_THEN) &&
                        (fra->ignore_size < rl[i].size)) ||
                       ((fra->gt_lt_sign & ISIZE_GREATER_THEN) &&
@@ -2890,11 +3152,7 @@ check_list(char   *file,
                             ((*file_size_to_retrieve + size_to_retrieve) < fra->max_copied_file_size))
 #endif
                         {
-#ifdef NEW_FRA
                            if (((fra->dir_options & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#else
-                           if (((fra->dir_flag & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#endif
                                (db.special_flag & DISTRIBUTED_HELPER_JOB))
                            {
                               rl[i].assigned = (unsigned char)db.job_no + 1;
@@ -2920,7 +3178,7 @@ check_list(char   *file,
 
                         diff_time = current_time - rl[i].file_mtime;
                         if (((fra->gt_lt_sign & IFTIME_EQUAL) &&
-                             (fra->ignore_file_time == diff_time)) ||
+                             (fra->ignore_file_time != diff_time)) ||
                             ((fra->gt_lt_sign & IFTIME_LESS_THEN) &&
                              (fra->ignore_file_time < diff_time)) ||
                             ((fra->gt_lt_sign & IFTIME_GREATER_THEN) &&
@@ -2953,11 +3211,7 @@ check_list(char   *file,
                                ((*file_size_to_retrieve + size_to_retrieve) < fra->max_copied_file_size))
 #endif
                            {
-#ifdef NEW_FRA
                               if (((fra->dir_options & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#else
-                              if (((fra->dir_flag & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#endif
                                   (db.special_flag & DISTRIBUTED_HELPER_JOB))
                               {
                                  rl[i].assigned = (unsigned char)db.job_no + 1;
@@ -3076,11 +3330,8 @@ check_list(char   *file,
    rl[no_of_listed_files].in_list = YES;
    rl[no_of_listed_files].special_flag = 0;
 
-#ifdef NEW_FRA
    if (((fra->dir_options & DONT_GET_DIR_LIST) == 0) &&
-#else
-   if (((fra->dir_flag & DONT_GET_DIR_LIST) == 0) &&
-#endif
+       (fra->stupid_mode != GET_ONCE_NOT_EXACT) &&
        ((file_mtime == -1) || (exact_date != DS2UT_SECOND) ||
         (file_size == -1) || (exact_size != 1)))
    {
@@ -3141,12 +3392,20 @@ check_list(char   *file,
    }
    if ((file_mtime != -1) && (file_size != -1))
    {
-      rl[no_of_listed_files].special_flag |= RL_GOT_EXACT_SIZE_DATE;
+      if (exact_date == DS2UT_SECOND)
+      {
+         rl[no_of_listed_files].special_flag |= RL_GOT_EXACT_DATE;
+      }
+      if (exact_size != 1)
+      {
+         rl[no_of_listed_files].special_flag |= RL_GOT_EXACT_SIZE;
+      }
+      rl[no_of_listed_files].special_flag |= RL_GOT_SIZE_DATE;
    }
 
    if ((fra->ignore_size == -1) ||
        ((fra->gt_lt_sign & ISIZE_EQUAL) &&
-        (fra->ignore_size == rl[no_of_listed_files].size)) ||
+        (fra->ignore_size != rl[no_of_listed_files].size)) ||
        ((fra->gt_lt_sign & ISIZE_LESS_THEN) &&
         (fra->ignore_size < rl[no_of_listed_files].size)) ||
        ((fra->gt_lt_sign & ISIZE_GREATER_THEN) &&
@@ -3168,7 +3427,7 @@ check_list(char   *file,
 
          diff_time = current_time - rl[no_of_listed_files].file_mtime;
          if (((fra->gt_lt_sign & IFTIME_EQUAL) &&
-              (fra->ignore_file_time == diff_time)) ||
+              (fra->ignore_file_time != diff_time)) ||
              ((fra->gt_lt_sign & IFTIME_LESS_THEN) &&
               (fra->ignore_file_time < diff_time)) ||
              ((fra->gt_lt_sign & IFTIME_GREATER_THEN) &&
@@ -3195,11 +3454,7 @@ check_list(char   *file,
           (*file_size_to_retrieve < fra->max_copied_file_size))
 #endif
       {
-#ifdef NEW_FRA
          if (((fra->dir_options & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#else
-         if (((fra->dir_flag & ONE_PROCESS_JUST_SCANNING) == 0) ||
-#endif
              (db.special_flag & DISTRIBUTED_HELPER_JOB))
          {
             rl[no_of_listed_files - 1].assigned = (unsigned char)db.job_no + 1;
@@ -3363,16 +3618,8 @@ check_name(char         *file_name,
    int  gotcha = NO;
    char *p_mask;
 
-#ifdef NEW_FRA
    if ((file_name[0] != '.') || (fra->dir_options & ACCEPT_DOT_FILES))
-#else
-   if ((file_name[0] != '.') || (fra->dir_flag & ACCEPT_DOT_FILES))
-#endif
    {
-      int i,
-          j,
-          status;
-
       if (fra->dir_flag & ALL_DISABLED)
       {
          if (fra->remove == YES)
@@ -3386,6 +3633,10 @@ check_name(char         *file_name,
       }
       else
       {
+         int i,
+             j,
+             status = 0;
+
          for (i = 0; i < nfg; i++)
          {
             p_mask = fml[i].file_list;

@@ -1,6 +1,6 @@
 /*
  *  dir_check.c - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 1995 - 2021 Holger Kiehl <Holger.Kiehl@dwd.de>
+ *  Copyright (c) 1995 - 2023 Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -95,6 +95,9 @@ DESCR__E_M1
 # include <sys/resource.h>         /* struct rusage                      */
 #endif
 #include <sys/wait.h>              /* waitpid()                          */
+#ifdef HAVE_STATX
+# include <sys/sysmacros.h>        /* makedev()                          */
+#endif
 #include <sys/stat.h>
 #include <sys/time.h>              /* struct timeval                     */
 #ifdef HAVE_MMAP
@@ -297,6 +300,10 @@ static void                add_to_proc_stat(unsigned int),
                            check_orphaned_procs(time_t),
                            check_pool_dir(time_t),
                            sig_alarm(int),
+#ifdef WITH_SYSTEMD
+                           sig_exit(int),
+                           terminate_subprocess(void),
+#endif
                            sig_handler(int);
 static pid_t               get_one_zombie(pid_t, time_t);
 static int                 get_process_pos(pid_t),
@@ -408,6 +415,9 @@ main(int argc, char *argv[])
 #endif
 
    if ((signal(SIGSEGV, sig_handler) == SIG_ERR) ||
+#ifdef WITH_SYSTEMD
+       (signal(SIGINT, sig_exit) == SIG_ERR) ||
+#endif
        (signal(SIGBUS, sig_handler) == SIG_ERR) ||
        (signal(SIGHUP, SIG_IGN) == SIG_ERR))
    {
@@ -1122,12 +1132,16 @@ main(int argc, char *argv[])
       if ((p_afd_status->amg_jobs & PAUSE_DISTRIBUTION) == 0)
       {
 #endif
-         char        *error_ptr;          /* Pointer showing where we */
+         char         *error_ptr;         /* Pointer showing where we */
                                           /* fail to see that the     */
                                           /* directory is available   */
                                           /* for us.                  */
-         time_t      start_time = now + sleep_time;
-         struct stat dir_stat_buf;
+         time_t       start_time = now + sleep_time;
+#ifdef HAVE_STATX
+         struct statx dir_stat_buf;
+#else
+         struct stat  dir_stat_buf;
+#endif
 
          if (check_fsa(NO, DIR_CHECK) == YES)
          {
@@ -1170,17 +1184,11 @@ main(int argc, char *argv[])
                 ((fra[de[i].fra_pos].dir_flag & INOTIFY_NEEDS_SCAN) ||
                  (fra[de[i].fra_pos].force_reread == YES) ||
                  (fra[de[i].fra_pos].force_reread == LOCAL_ONLY) ||
-#  ifdef NEW_FRA
                  (((fra[de[i].fra_pos].dir_options & INOTIFY_RENAME) == 0) &&
                   ((fra[de[i].fra_pos].dir_options & INOTIFY_CLOSE) == 0) &&
                   ((fra[de[i].fra_pos].dir_options & INOTIFY_CREATE) == 0) &&
-                  ((fra[de[i].fra_pos].dir_options & INOTIFY_DELETE) == 0))) &&
-#  else
-                 (((fra[de[i].fra_pos].dir_flag & INOTIFY_RENAME) == 0) &&
-                  ((fra[de[i].fra_pos].dir_flag & INOTIFY_CLOSE) == 0) &&
-                  ((fra[de[i].fra_pos].dir_flag & INOTIFY_CREATE) == 0) &&
-                  ((fra[de[i].fra_pos].dir_flag & INOTIFY_DELETE) == 0))) &&
-#  endif
+                  ((fra[de[i].fra_pos].dir_options & INOTIFY_DELETE) == 0) &&
+                  ((fra[de[i].fra_pos].dir_options & INOTIFY_ATTRIB) == 0))) &&
 # endif
                 ((fra[de[i].fra_pos].fsa_pos != -1) ||
                  (fra[de[i].fra_pos].no_of_time_entries == 0) ||
@@ -1266,23 +1274,22 @@ main(int argc, char *argv[])
                  (fra[de[i].fra_pos].force_reread == YES) ||
                  (fra[de[i].fra_pos].force_reread == LOCAL_ONLY) ||
                  (fra[de[i].fra_pos].dir_flag & FILES_IN_QUEUE) ||
-#  ifdef NEW_FRA
                  (((fra[de[i].fra_pos].dir_options & INOTIFY_RENAME) == 0) &&
                   ((fra[de[i].fra_pos].dir_options & INOTIFY_CLOSE) == 0) &&
                   ((fra[de[i].fra_pos].dir_options & INOTIFY_CREATE) == 0) &&
-                  ((fra[de[i].fra_pos].dir_options & INOTIFY_DELETE) == 0))) &&
-#  else
-                 (((fra[de[i].fra_pos].dir_flag & INOTIFY_RENAME) == 0) &&
-                  ((fra[de[i].fra_pos].dir_flag & INOTIFY_CLOSE) == 0) &&
-                  ((fra[de[i].fra_pos].dir_flag & INOTIFY_CREATE) == 0) &&
-                  ((fra[de[i].fra_pos].dir_flag & INOTIFY_DELETE) == 0))) &&
-#  endif
+                  ((fra[de[i].fra_pos].dir_options & INOTIFY_DELETE) == 0) &&
+                  ((fra[de[i].fra_pos].dir_options & INOTIFY_ATTRIB) == 0))) &&
 # endif
                 ((fra[de[i].fra_pos].fsa_pos != -1) ||
                  (fra[de[i].fra_pos].no_of_time_entries == 0) ||
                  (fra[de[i].fra_pos].next_check_time <= start_time)))
             {
-               if (stat(de[i].dir, &dir_stat_buf) < 0)
+# ifdef HAVE_STATX
+               if (statx(0, de[i].dir, AT_STATX_SYNC_AS_STAT,
+                         STATX_NLINK | STATX_MTIME, &dir_stat_buf) == -1)
+# else
+               if (stat(de[i].dir, &dir_stat_buf) == -1)
+# endif
                {
                   int ret;
 
@@ -1346,7 +1353,12 @@ main(int argc, char *argv[])
                       (fra[de[i].fra_pos].force_reread == LOCAL_ONLY) ||
                       ((force_reread_interval) &&
                        ((now - de[i].search_time) > force_reread_interval)) ||
-                      (dir_stat_buf.st_mtime >= de[i].search_time))
+# ifdef HAVE_STATX
+                      (dir_stat_buf.stx_mtime.tv_sec >= de[i].search_time)
+# else
+                      (dir_stat_buf.st_mtime >= de[i].search_time)
+# endif
+                     )
                   {
                      /* The directory time has changed. New files */
                      /* have arrived!                             */
@@ -1355,7 +1367,11 @@ main(int argc, char *argv[])
                      /*       so we might end up in an endless    */
                      /*       loop.                               */
 # ifdef WITH_MULTI_DIR_SCANS
+#  ifdef HAVE_STATX
+                     if ((handle_dir(i, &dir_stat_buf.stx_mtime.tv_sec, NULL, NULL,
+#  else
                      if ((handle_dir(i, &dir_stat_buf.st_mtime, NULL, NULL,
+#  endif
 # else
                      if ((handle_dir(i, NULL, NULL, NULL,
 # endif
@@ -1386,7 +1402,11 @@ main(int argc, char *argv[])
                    * very unlikely that the paused status has changed
                    * so quickly.
                    */
+# ifdef HAVE_STATX
+                  if (dir_stat_buf.stx_nlink > 2)
+# else
                   if (dir_stat_buf.st_nlink > 2)
+# endif
                   {
                      int dest_count = 0,
                          nfg = 0;
@@ -1943,9 +1963,16 @@ do_one_dir(void *arg)
                  start_time;
    char          *p_paused_host;
    struct data_t *data = (struct data_t *)arg;
+# ifdef HAVE_STATX
+   struct statx  dir_stat_buf;
+
+   if (statx(0, de[data->i].dir, AT_STATX_SYNC_AS_STAT,
+             STATX_MTIME | STATX_NLINK, &dir_stat_buf) < 0)
+# else
    struct stat   dir_stat_buf;
 
    if (stat(de[data->i].dir, &dir_stat_buf) < 0)
+# endif
    {
       system_log(ERROR_SIGN, __FILE__, __LINE__,
                  "Can't access directory %s : %s",
@@ -1960,7 +1987,12 @@ do_one_dir(void *arg)
     */
    if ((fra[de[data->i].fra_pos].force_reread == YES) ||
        (fra[de[data->i].fra_pos].force_reread == LOCAL_ONLY) ||
-       (dir_stat_buf.st_mtime >= de[data->i].search_time))
+# ifdef HAVE_STATX
+       (dir_stat_buf.stx_mtime.tv_sec >= de[data->i].search_time)
+# else
+       (dir_stat_buf.st_mtime >= de[data->i].search_time)
+# endif
+      )
    {
       /* The directory time has changed. New files */
       /* have arrived!                             */
@@ -1990,7 +2022,11 @@ do_one_dir(void *arg)
    /*
     * Handle any paused hosts in this directory.
     */
+# ifdef HAVE_STATX
+   if (dir_stat_buf.stx_nlink > 2)
+# else
    if (dir_stat_buf.st_nlink > 2)
+# endif
    {
       int dest_count = 0,
           nfg = 0;
@@ -2085,12 +2121,20 @@ check_pool_dir(time_t now)
       char          *work_ptr;
 #ifdef MULTI_FS_SUPPORT
       char          str_dev_self[MAX_INT_HEX_LENGTH + 1];
+# ifdef HAVE_STATX
+      struct statx  stat_buf;
+# else
       struct stat   stat_buf;
+# endif
 #endif
       struct dirent *p_dir;
 
 #ifdef MULTI_FS_SUPPORT
+# ifdef HAVE_STATX
+      if (statx(0, pool_dir, AT_STATX_SYNC_AS_STAT, 0, &stat_buf) == -1)
+# else
       if (stat(pool_dir, &stat_buf) == -1)
+# endif
       {
          system_log(DEBUG_SIGN, __FILE__, __LINE__,
                     "Failed to stat() `%s' : %s", pool_dir, strerror(errno));
@@ -2099,7 +2143,12 @@ check_pool_dir(time_t now)
       else
       {
          (void)snprintf(str_dev_self, MAX_INT_HEX_LENGTH, "%x",
-                        (unsigned int)stat_buf.st_dev);
+# ifdef HAVE_STATX
+                        (unsigned int)makedev(stat_buf.stx_dev_major, stat_buf.stx_dev_minor)
+# else
+                        (unsigned int)stat_buf.st_dev
+# endif
+                       );
       }
 #endif
       work_ptr = pool_dir + strlen(pool_dir);
@@ -2111,8 +2160,14 @@ check_pool_dir(time_t now)
          {
             (void)strcpy(work_ptr, p_dir->d_name);
 #ifdef MULTI_FS_SUPPORT
+# ifdef HAVE_STATX
+            if ((statx(0, pool_dir, AT_STATX_SYNC_AS_STAT | AT_SYMLINK_NOFOLLOW,
+                       STATX_MODE, &stat_buf) != -1) &&
+                (S_ISLNK(stat_buf.stx_mode)))
+# else
             if ((lstat(pool_dir, &stat_buf) != -1) &&
                 (S_ISLNK(stat_buf.st_mode)))
+# endif
             {
                if (strcmp(str_dev_self, p_dir->d_name) != 0)
                {
@@ -3645,7 +3700,18 @@ check_fifo(int read_fd, int write_fd)
                return(HALT);
 #endif /* WITH_DIR_CHECK_RESTART */
 
-            case STOP  :
+            case STOP     :
+            case SHUTDOWN :
+#ifdef WITH_SYSTEMD
+               if (buffer[count] == SHUTDOWN)
+               {
+                  terminate_subprocess();
+               }
+#endif
+               (void)fprintf(stderr,
+                             "%s terminated by fifo message %s.\n",
+                             DIR_CHECK,
+                             get_com_action_str((int)buffer[count]));
 #ifdef SHOW_EXEC_TIMES
                for (i = 0; i < no_fork_jobs; i++)
                {
@@ -3931,6 +3997,111 @@ check_fifo(int read_fd, int write_fd)
 }
 
 
+#ifdef WITH_SYSTEMD
+/*+++++++++++++++++++++++ terminate_subprocess() ++++++++++++++++++++++++*/
+static void
+terminate_subprocess(void)
+{
+   if ((dcpl != NULL) && (*no_of_process > 0))
+   {
+      int           i,
+                    max_shutdown_time;
+      char          config_file[MAX_PATH_LENGTH];
+#ifdef HAVE_STATX
+      struct statx  stat_buf;
+#else
+      struct stat   stat_buf;
+#endif
+
+      (void)snprintf(config_file, MAX_PATH_LENGTH, "%s%s%s",
+                     p_work_dir, ETC_DIR, AFD_CONFIG_FILE);
+#ifdef HAVE_STATX 
+      if (statx(0, config_file, AT_STATX_SYNC_AS_STAT,
+                STATX_MTIME, &stat_buf) == -1)
+#else          
+      if (stat(config_file, &stat_buf) == -1)
+#endif
+      {
+         max_shutdown_time = MAX_SHUTDOWN_TIME;
+      }
+      else
+      {
+         char *buffer;
+
+         if ((eaccess(config_file, F_OK) == 0) &&
+             (read_file_no_cr(config_file, &buffer, YES, __FILE__, __LINE__) != INCORRECT))
+         {
+            char value[MAX_INT_LENGTH + 1];
+
+            if (get_definition(buffer, MAX_SHUTDOWN_TIME_DEF,
+                               value, MAX_INT_LENGTH) != NULL)
+            {
+               max_shutdown_time = atoi(value);
+               if (max_shutdown_time < MIN_SHUTDOWN_TIME)
+               {
+                  system_log(WARN_SIGN, __FILE__, __LINE__,
+                             "%s is to low (%d < %d), setting default %d.",
+                             MAX_SHUTDOWN_TIME_DEF, max_shutdown_time,
+                             MIN_SHUTDOWN_TIME, MAX_SHUTDOWN_TIME);
+                  max_shutdown_time = MAX_SHUTDOWN_TIME;
+               }
+            }
+            else
+            {
+               max_shutdown_time = MAX_SHUTDOWN_TIME;
+            }
+            free(buffer);
+         }
+         else
+         {
+            max_shutdown_time = MAX_SHUTDOWN_TIME;
+         }
+      }
+
+      system_log(INFO_SIGN, NULL, 0,
+                 "%s got termination message STOP, waiting for %d process to terminate.",
+                 DIR_CHECK, *no_of_process);
+
+      for (i = 0; i < (max_shutdown_time - MIN_SHUTDOWN_TIME); i++)
+      {
+         while (get_one_zombie(-1, time(NULL)) > 0)
+         {
+            /* Do nothing. */;
+         }
+         if (*no_of_process > 0)
+         {
+            my_usleep(100000L);
+         }
+      }
+      if (*no_of_process > 0)
+      {
+         system_log(WARN_SIGN, NULL, 0,
+                    "There are still %d process left executing. Data can be lost.",
+                    *no_of_process);
+
+         for (i = 0; i < *no_of_process; i++)
+         {
+            system_log(DEBUG_SIGN, NULL, 0,
+# if SIZEOF_PID_T == 4
+                       "Lost process %d: pid=%d jid= #%x",
+# else
+                       "Lost process %d: pid=%lld jid= #%x",
+# endif
+                       i, (pri_pid_t)dcpl[i].pid, dcpl[i].job_id);
+         }
+
+         /*
+          * The left over process will be killed by systemd
+          * (KillMode=control-group).
+          */
+      }
+   }
+
+   return;
+}
+#endif /* WITH_SYSTEMD */
+
+
 /*++++++++++++++++++++++++++++ sig_handler() ++++++++++++++++++++++++++++*/
 static void
 sig_handler(int signo)
@@ -3983,3 +4154,23 @@ sig_alarm(int signo)
 {
    siglongjmp(env_alrm, 1);
 }
+
+
+#ifdef WITH_SYSTEMD
+/*++++++++++++++++++++++++++++++ sig_exit() +++++++++++++++++++++++++++++*/
+static void
+sig_exit(int signo)
+{
+   terminate_subprocess();
+
+   (void)fprintf(stderr,
+#if SIZEOF_PID_T == 4
+                 "%s terminated by signal %d (%d)\n",
+#else
+                 "%s terminated by signal %d (%lld)\n",
+#endif
+                 DIR_CHECK, signo, (pri_pid_t)getpid());
+
+   exit(SUCCESS);
+}
+#endif

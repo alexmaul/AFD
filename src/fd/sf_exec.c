@@ -1,6 +1,6 @@
 /*
  *  sf_exec.c - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 2011 - 2021 Holger Kiehl <Holger.Kiehl@dwd.de>
+ *  Copyright (c) 2011 - 2024 Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -49,6 +49,7 @@ DESCR__S_M1
  ** HISTORY
  **   27.11.2011 H.Kiehl Created
  **   15.09.2014 H.Kiehl Added simulation mode.
+ **   14.01.2024 H.Kiehl Add more debug log information.
  **
  */
 DESCR__E_M1
@@ -386,6 +387,71 @@ main(int argc, char *argv[])
       {
          (void)strcpy(p_source_file, p_file_name_buffer);
 
+#ifdef WITH_DUP_CHECK
+# ifndef FAST_SF_DUPCHECK
+         if ((db.dup_check_timeout > 0) &&
+             (isdup(source_file, p_file_name_buffer, *p_file_size_buffer,
+                    db.crc_id, db.dup_check_timeout, db.dup_check_flag, NO,
+#  ifdef HAVE_HW_CRC32
+                    have_hw_crc32,
+#  endif
+                    YES, YES) == YES))
+         {
+            time_t       file_mtime;
+#  ifdef HAVE_STATX
+            struct statx stat_buf;
+#  else
+            struct stat  stat_buf;
+#  endif
+
+            now = time(NULL);
+            if (file_mtime_buffer == NULL)
+            {
+#  ifdef HAVE_STATX
+               if (statx(0, source_file, AT_STATX_SYNC_AS_STAT,
+                         STATX_MTIME, &stat_buf) == -1)
+#  else
+               if (stat(source_file, &stat_buf) == -1)
+#  endif
+               {
+                  file_mtime = now;
+               }
+               else
+               {
+#  ifdef HAVE_STATX
+                  file_mtime = stat_buf.stx_mtime.tv_sec;
+#  else
+                  file_mtime = stat_buf.st_mtime;
+#  endif
+               }
+            }
+            else
+            {
+               file_mtime = *p_file_mtime_buffer;
+            }
+            handle_dupcheck_delete(SEND_FILE_EXEC, fsa->host_alias, source_file,
+                                   p_file_name_buffer, *p_file_size_buffer,
+                                   file_mtime, now);
+            if (db.dup_check_flag & DC_DELETE)
+            {
+               local_file_size += *p_file_size_buffer;
+               local_file_counter += 1;
+               if (now >= (last_update_time + LOCK_INTERVAL_TIME))
+               {
+                  last_update_time = now;
+                  update_tfc(local_file_counter, local_file_size,
+                             p_file_size_buffer, files_to_send,
+                             files_send, now);
+                  local_file_size = 0;
+                  local_file_counter = 0;
+               }
+            }
+         }
+         else
+         {
+# endif
+#endif
+
          if (db.special_flag & EXEC_ONCE_ONLY)
          {
             if (exec_done == NO)
@@ -440,7 +506,39 @@ main(int argc, char *argv[])
                                      "%s", start_ptr);
                         } while (*end_ptr != '\0');
                      }
+                     rm_dupcheck_crc(source_file, p_file_name_buffer,
+                                     *p_file_size_buffer);
                      exit(EXEC_ERROR);
+                  }
+                  else
+                  {
+                     if (fsa->debug > NORMAL_MODE)
+                     {
+                        trans_db_log(INFO_SIGN, __FILE__, __LINE__, NULL,
+                                     "Executed command `%s' [Return code = %d]",
+                                     command_str, ret);
+                        if ((return_str != NULL) && (return_str[0] != '\0'))
+                        {
+                           char *end_ptr = return_str,
+                                *start_ptr;
+
+                           do
+                           {
+                              start_ptr = end_ptr;
+                              while ((*end_ptr != '\n') && (*end_ptr != '\0'))
+                              {
+                                 end_ptr++;
+                              }
+                              if (*end_ptr == '\n')
+                              {
+                                 *end_ptr = '\0';
+                                 end_ptr++;
+                              }
+                              trans_db_log(INFO_SIGN, __FILE__, __LINE__, NULL,
+                                           "%s", start_ptr);
+                           } while (*end_ptr != '\0');
+                        }
+                     }
                   }
                }
 #ifdef _OUTPUT_LOG
@@ -544,12 +642,44 @@ main(int argc, char *argv[])
                         {
                            *end_ptr = '\0';
                               end_ptr++;
-                     }
+                        }
                         trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                                   "%s", start_ptr);
                      } while (*end_ptr != '\0');
                   }
+                  rm_dupcheck_crc(source_file, p_file_name_buffer,
+                                  *p_file_size_buffer);
                   exit(EXEC_ERROR);
+               }
+               else
+               {
+                  if (fsa->debug > NORMAL_MODE)
+                  {
+                     trans_db_log(INFO_SIGN, __FILE__, __LINE__, NULL,
+                                  "Executed command `%s' [Return code = %d]",
+                                  command_str, ret);
+                     if ((return_str != NULL) && (return_str[0] != '\0'))
+                     {
+                        char *end_ptr = return_str,
+                             *start_ptr;
+
+                        do
+                        {
+                           start_ptr = end_ptr;
+                           while ((*end_ptr != '\n') && (*end_ptr != '\0'))
+                           {
+                              end_ptr++;
+                           }
+                           if (*end_ptr == '\n')
+                           {
+                              *end_ptr = '\0';
+                              end_ptr++;
+                           }
+                           trans_db_log(INFO_SIGN, __FILE__, __LINE__, NULL,
+                                        "%s", start_ptr);
+                        } while (*end_ptr != '\0');
+                     }
+                  }
                }
                free(return_str);
                return_str = NULL;
@@ -789,7 +919,11 @@ try_again_unlink:
                             HOST_SUCCESS_ACTION, transfer_log_fd);
             }
          }
-
+#ifdef WITH_DUP_CHECK
+# ifndef FAST_SF_DUPCHECK
+         }
+# endif
+#endif
          p_file_name_buffer += MAX_FILENAME_LENGTH;
          p_file_size_buffer++;
          if (file_mtime_buffer != NULL)
@@ -972,6 +1106,7 @@ sf_exec_exit(void)
          trans_log(INFO_SIGN, NULL, 0, NULL, NULL, "%s #%x", buffer, db.id.job);
       }
       reset_fsa((struct job *)&db, exitflag, 0, 0);
+      fsa_detach_pos(db.fsa_pos);
    }
 
    free(file_name_buffer);
@@ -1013,7 +1148,8 @@ static void
 sig_kill(int signo)
 {
    exitflag = 0;
-   if (fsa->job_status[(int)db.job_no].unique_name[2] == 5)
+   if ((fsa != NULL) && (fsa_pos_save == YES) &&
+       (fsa->job_status[(int)db.job_no].unique_name[2] == 5))
    {
       exit(SUCCESS);
    }

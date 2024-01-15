@@ -1,6 +1,6 @@
 /*
  *  sf_sftp.c - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 2006 - 2022 Holger Kiehl <Holger.Kiehl@dwd.de>
+ *  Copyright (c) 2006 - 2023 Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -97,11 +97,8 @@ int                        counter_fd = -1,
 #ifdef _MAINTAINER_LOG
                            maintainer_log_fd = STDERR_FILENO,
 #endif
-                           no_of_dirs,
                            no_of_hosts,
                            *p_no_of_hosts = NULL,
-                           fra_fd = -1,
-                           fra_id,
                            fsa_fd = -1,
                            fsa_id,
                            fsa_pos_save = NO,
@@ -140,8 +137,7 @@ unsigned int               burst_2_counter = 0,
                            total_append_count = 0;
 #endif
 #ifdef HAVE_MMAP
-off_t                      fra_size,
-                           fsa_size;
+off_t                      fsa_size;
 #endif
 off_t                      append_offset = 0,
                            *file_size_buffer = NULL;
@@ -154,7 +150,6 @@ char                       *del_file_name_buffer = NULL,
                            msg_str[MAX_RET_MSG_LENGTH],
                            *p_work_dir = NULL,
                            tr_hostname[MAX_HOSTNAME_LENGTH + 2];
-struct fileretrieve_status *fra = NULL;
 struct filetransfer_status *fsa = NULL;
 struct job                 db;
 struct rule                *rule;
@@ -267,23 +262,6 @@ main(int argc, char *argv[])
    files_to_send = init_sf(argc, argv, file_path, SFTP_FLAG);
    p_db = &db;
    msg_str[0] = '\0';
-   if ((fsa->trl_per_process > 0) &&
-       (fsa->trl_per_process < fsa->block_size))
-   {
-      blocksize = fsa->trl_per_process;
-   }
-   else
-   {
-      blocksize = fsa->block_size;
-   }
-   /* Fixme. SFTP can only handle a maximum of 262144 bytes. */
-   if (blocksize > MAX_SFTP_BLOCKSIZE)
-   {
-      trans_log(DEBUG_SIGN, __FILE__, __LINE__, NULL, NULL,
-                "Decreasing block size from %d to %d",
-                blocksize, MAX_SFTP_BLOCKSIZE);
-      blocksize = MAX_SFTP_BLOCKSIZE;
-   }
    (void)strcpy(fullname, file_path);
    p_fullname = fullname + strlen(fullname);
    if (*(p_fullname - 1) != '/')
@@ -390,12 +368,85 @@ main(int argc, char *argv[])
    }
    else
    {
+      int max_blocksize = sftp_max_write_length(),
+          orig_blocksize;
+
       if (fsa->debug > NORMAL_MODE)
       {
          sftp_features();
          trans_db_log(INFO_SIGN, __FILE__, __LINE__, NULL,
                       "Agreed on SFTP version %u. [%s]",
                       sftp_version(), msg_str);
+      }
+
+      /*
+       * SFTP is very sensitive for the blocksize used. Newer
+       * versions of openssh allow us to retrieve the maximum
+       * allowed. Ensure we do not exceed this limit.
+       *
+       * On the other hand a value too low hurts throughput.
+       * So also make sure the value is not to low.
+       */
+      if ((fsa->trl_per_process > 0) &&
+          (fsa->trl_per_process < fsa->block_size))
+      {
+         blocksize = fsa->trl_per_process;
+         if (blocksize > max_blocksize)
+         {
+            trans_log(DEBUG_SIGN, __FILE__, __LINE__, NULL, NULL,
+                      "Decreasing block size from %d to %u",
+                      blocksize, max_blocksize);
+            blocksize = max_blocksize;
+         }
+      }
+      else
+      {
+         blocksize = fsa->block_size;
+         if (blocksize < MIN_SFTP_BLOCKSIZE)
+         {
+            int old_blocksize = blocksize;
+
+            if (MIN_SFTP_BLOCKSIZE > max_blocksize)
+            {
+               blocksize = max_blocksize;
+            }
+            else
+            {
+               blocksize = MIN_SFTP_BLOCKSIZE;
+            }
+            if (blocksize != old_blocksize)
+            {
+               trans_log(DEBUG_SIGN, __FILE__, __LINE__, NULL, NULL,
+                         "Changing block size from %d to %d",
+                         old_blocksize, blocksize);
+            }
+         }
+         else if (blocksize > max_blocksize)
+              {
+                 trans_log(DEBUG_SIGN, __FILE__, __LINE__, NULL, NULL,
+                           "Decreasing block size from %d to %d",
+                           blocksize, max_blocksize);
+                 blocksize = max_blocksize;
+              }
+      }
+      orig_blocksize = blocksize;
+      if ((status = sftp_set_blocksize(&blocksize)) != SUCCESS)
+      {
+         if (status == SFTP_BLOCKSIZE_CHANGED)
+         {
+            if (fsa->debug > NORMAL_MODE)
+            {
+               trans_db_log(INFO_SIGN, __FILE__, __LINE__, NULL,
+                            "Changed blocksize from %d to %d, due to server request.",
+                            orig_blocksize, blocksize);
+            }
+         }
+         else
+         {
+            /* sftp_set_blocksize() already printed why it failed. */
+            sftp_quit();
+            exit(SET_BLOCKSIZE_ERROR);
+         }
       }
 
       if (db.special_flag & CREATE_TARGET_DIR)
@@ -884,6 +935,71 @@ main(int argc, char *argv[])
          (void)strcpy(p_final_filename, p_file_name_buffer);
          (void)strcpy(p_fullname, p_file_name_buffer);
 
+#ifdef WITH_DUP_CHECK
+# ifndef FAST_SF_DUPCHECK
+         if ((db.dup_check_timeout > 0) &&
+             (isdup(fullname, p_file_name_buffer, *p_file_size_buffer,
+                    db.crc_id, db.dup_check_timeout, db.dup_check_flag, NO,
+#  ifdef HAVE_HW_CRC32
+                    have_hw_crc32,
+#  endif
+                    YES, YES) == YES))
+         {
+            time_t       file_mtime;
+#  ifdef HAVE_STATX
+            struct statx stat_buf;
+#  else
+            struct stat  stat_buf;
+#  endif
+
+            now = time(NULL);
+            if (file_mtime_buffer == NULL)
+            {
+#  ifdef HAVE_STATX
+               if (statx(0, fullname, AT_STATX_SYNC_AS_STAT,
+                         STATX_MTIME, &stat_buf) == -1)
+#  else
+               if (stat(fullname, &stat_buf) == -1)
+#  endif
+               {
+                  file_mtime = now;
+               }
+               else
+               {
+#  ifdef HAVE_STATX
+                  file_mtime = stat_buf.stx_mtime.tv_sec;
+#  else
+                  file_mtime = stat_buf.st_mtime;
+#  endif
+               }
+            }
+            else
+            {
+               file_mtime = *p_file_mtime_buffer;
+            }
+            handle_dupcheck_delete(SEND_FILE_SFTP, fsa->host_alias, fullname,
+                                   p_file_name_buffer, *p_file_size_buffer,
+                                   file_mtime, now);
+            if (db.dup_check_flag & DC_DELETE)
+            {
+               local_file_size += *p_file_size_buffer;
+               local_file_counter += 1;
+               if (now >= (last_update_time + LOCK_INTERVAL_TIME))
+               {
+                  last_update_time = now;
+                  update_tfc(local_file_counter, local_file_size,
+                             p_file_size_buffer, files_to_send,
+                             files_send, now);
+                  local_file_size = 0;
+                  local_file_counter = 0;
+               }
+            }
+         }
+         else
+         {
+# endif
+#endif
+
          /* Send file in dot notation? */
          if ((db.lock == DOT) || (db.lock == DOT_VMS))
          {
@@ -967,14 +1083,14 @@ main(int argc, char *argv[])
             }
             if (append_file_number != -1)
             {
-               struct stat stat_buf;
+               struct stat rdir_stat_buf;
 
                if (simulation_mode == YES)
                {
-                  stat_buf.st_size = *p_file_size_buffer;
+                  rdir_stat_buf.st_size = *p_file_size_buffer;
                }
                if ((status = sftp_stat(initial_filename,
-                                       &stat_buf)) != SUCCESS)
+                                       &rdir_stat_buf)) != SUCCESS)
                {
                   trans_log(DEBUG_SIGN, __FILE__, __LINE__, NULL, msg_str,
                             "Failed to stat() file `%s' (%d).",
@@ -986,7 +1102,7 @@ main(int argc, char *argv[])
                }
                else
                {
-                  append_offset = stat_buf.st_size;
+                  append_offset = rdir_stat_buf.st_size;
                   if (fsa->debug > NORMAL_MODE)
                   {
                      trans_db_log(INFO_SIGN, __FILE__, __LINE__, NULL,
@@ -996,7 +1112,7 @@ main(int argc, char *argv[])
                                   "Remote size of `%s' is %lld.",
 #endif
                                   initial_filename,
-                                  (pri_off_t)stat_buf.st_size);
+                                  (pri_off_t)rdir_stat_buf.st_size);
                   }
                }
                if (append_offset > 0)
@@ -1027,6 +1143,8 @@ main(int argc, char *argv[])
                trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, msg_str,
                          "Failed to open remote file `%s' (%d).",
                          initial_filename, status);
+               rm_dupcheck_crc(fullname, p_file_name_buffer,
+                               *p_file_size_buffer);
                sftp_quit();
                exit(eval_timeout(OPEN_REMOTE_ERROR));
             }
@@ -1049,6 +1167,8 @@ main(int argc, char *argv[])
                trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                          "Failed to open local file `%s' : %s",
                          fullname, strerror(errno));
+               rm_dupcheck_crc(fullname, p_file_name_buffer,
+                               *p_file_size_buffer);
                sftp_quit();
                exit(OPEN_LOCAL_ERROR);
             }
@@ -1123,6 +1243,8 @@ main(int argc, char *argv[])
                      {
                         sftp_quit();
                      }
+                     rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                     *p_file_size_buffer);
                      exit(eval_timeout(WRITE_REMOTE_ERROR));
                   }
                   if (gsf_check_fsa(p_db) != NEITHER)
@@ -1195,6 +1317,8 @@ main(int argc, char *argv[])
                   trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                             "Failed to write WMO header to remote file `%s'",
                             initial_filename);
+                  rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                  *p_file_size_buffer);
                   sftp_quit();
                   exit(eval_timeout(WRITE_REMOTE_ERROR));
                }
@@ -1225,6 +1349,8 @@ main(int argc, char *argv[])
                   trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                             "Could not read() local file `%s' [%d] : %s",
                             fullname, bytes_buffered, strerror(errno));
+                  rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                  *p_file_size_buffer);
                   sftp_quit();
                   exit(READ_LOCAL_ERROR);
                }
@@ -1241,6 +1367,8 @@ main(int argc, char *argv[])
                      trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                                "Failed to write %d bytes to remote file `%s'",
                                bytes_buffered, initial_filename);
+                     rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                     *p_file_size_buffer);
                      sftp_quit();
                      exit(eval_timeout(WRITE_REMOTE_ERROR));
                   }
@@ -1280,6 +1408,8 @@ main(int argc, char *argv[])
                                            (pri_time_t)(end_transfer_time_file - start_transfer_time_file));
                                  sftp_quit();
                                  exitflag = 0;
+                                 rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                                 *p_file_size_buffer);
                                  exit(STILL_FILES_TO_SEND);
                               }
                            }
@@ -1296,15 +1426,15 @@ main(int argc, char *argv[])
              */
             if ((no_of_bytes + append_offset) != *p_file_size_buffer)
             {
-               char sign[LOG_SIGN_LENGTH];
+               char *sign;
 
                if (db.special_flag & SILENT_NOT_LOCKED_FILE)
                {
-                  (void)memcpy(sign, DEBUG_SIGN, LOG_SIGN_LENGTH);
+                  sign = DEBUG_SIGN;
                }
                else
                {
-                  (void)memcpy(sign, WARN_SIGN, LOG_SIGN_LENGTH);
+                  sign = WARN_SIGN;
                }
 
                /*
@@ -1341,6 +1471,8 @@ main(int argc, char *argv[])
                trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, msg_str,
                          "Failed to flush remaining writes to remote file `%s'",
                          initial_filename);
+               rm_dupcheck_crc(fullname, p_file_name_buffer,
+                               *p_file_size_buffer);
                sftp_quit();
                exit(eval_timeout(WRITE_REMOTE_ERROR));
             }
@@ -1356,6 +1488,8 @@ main(int argc, char *argv[])
                   trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
                             "Failed to write <CR><CR><LF><ETX> to remote file `%s'",
                             initial_filename);
+                  rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                  *p_file_size_buffer);
                   sftp_quit();
                   exit(eval_timeout(WRITE_REMOTE_ERROR));
                }
@@ -1386,6 +1520,8 @@ main(int argc, char *argv[])
                   trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, msg_str,
                             "Failed to close remote file `%s'",
                             initial_filename);
+                  rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                  *p_file_size_buffer);
                   sftp_quit();
                   exit(eval_timeout(CLOSE_REMOTE_ERROR));
                }
@@ -1434,14 +1570,14 @@ main(int argc, char *argv[])
 
             if (fsa->debug > NORMAL_MODE)
             {
-               struct stat stat_buf;
+               struct stat rdir_stat_buf;
 
                if (simulation_mode == YES)
                {
-                  stat_buf.st_size = *p_file_size_buffer;
+                  rdir_stat_buf.st_size = *p_file_size_buffer;
                }
                if ((status = sftp_stat(initial_filename,
-                                       &stat_buf)) != SUCCESS)
+                                       &rdir_stat_buf)) != SUCCESS)
                {
                   trans_log(WARN_SIGN, __FILE__, __LINE__, NULL, msg_str,
                             "Failed to stat() remote file `%s' (%d).",
@@ -1461,7 +1597,7 @@ main(int argc, char *argv[])
 #endif
                                p_final_filename,
                                (pri_off_t)(no_of_bytes + append_offset + additional_length),
-                               (pri_off_t)stat_buf.st_size);
+                               (pri_off_t)rdir_stat_buf.st_size);
                }
             }
          } /* if (append_offset < p_file_size_buffer) */
@@ -1483,56 +1619,26 @@ main(int argc, char *argv[])
          if ((fsa->protocol_options & CHECK_SIZE) ||
              (db.special_flag & MATCH_REMOTE_SIZE))
          {
-            struct stat stat_buf;
+            struct stat rdir_stat_buf;
 
             if ((status = sftp_stat(initial_filename,
-                                    &stat_buf)) != SUCCESS)
+                                    &rdir_stat_buf)) != SUCCESS)
             {
                trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, msg_str,
                          "Failed to stat() remote file `%s' (%d). Cannot validate remote size.",
                          initial_filename, status);
+               rm_dupcheck_crc(fullname, p_file_name_buffer,
+                               *p_file_size_buffer);
                sftp_quit();
                exit(eval_timeout(STAT_TARGET_ERROR));
             }
             if (simulation_mode == YES)
             {
-               stat_buf.st_size = *p_file_size_buffer;
+               rdir_stat_buf.st_size = *p_file_size_buffer;
             }
 
-            if (stat_buf.st_size != (no_of_bytes + append_offset + additional_length))
+            if (rdir_stat_buf.st_size != (no_of_bytes + append_offset + additional_length))
             {
-#ifdef WITH_DUP_CHECK
-               /*
-                * We have already stored the CRC value for
-                * this file but failed pick up the file.
-                * So we must remove the CRC value!
-                */
-               if (db.dup_check_timeout > 0)
-               {
-                  if (isdup_rm(fullname, p_final_filename,
-                               *p_file_size_buffer,
-                               db.crc_id,
-                               db.dup_check_flag,
-# ifdef HAVE_HW_CRC32
-                               have_hw_crc32,
-# endif
-                               NO, NO) != SUCCESS)
-                  {
-                     trans_log(WARN_SIGN, __FILE__, __LINE__, NULL, NULL,
-                               "Failed to remove CRC entry for %s",
-                               p_final_filename);
-                  }
-                  else
-                  {
-                     if (fsa->debug > NORMAL_MODE)
-                     {
-                        trans_db_log(INFO_SIGN, __FILE__, __LINE__, NULL,
-                                     "Removed dupcheck CRC entry for `%s'",
-                                     p_final_filename);
-                     }
-                  }
-               }
-#endif
                trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, msg_str,
 #if SIZEOF_OFF_T == 4
                          "Local file size %ld does not match remote size %ld for file `%s'",
@@ -1540,7 +1646,20 @@ main(int argc, char *argv[])
                          "Local file size %lld does not match remote size %lld for file `%s'",
 #endif
                          (pri_off_t)(no_of_bytes + append_offset + additional_length),
-                         (pri_off_t)stat_buf.st_size, initial_filename);
+                         (pri_off_t)rdir_stat_buf.st_size, initial_filename);
+#ifdef WITH_DUP_CHECK
+               if (db.dup_check_timeout > 0)
+               {
+                  /* Remove the dupcheck CRC value. */
+                  (void)isdup(fullname, p_file_name_buffer,
+                              *p_file_size_buffer, db.crc_id,
+                              db.dup_check_timeout, db.dup_check_flag, YES,
+# ifdef HAVE_HW_CRC32
+                              have_hw_crc32,
+# endif
+                              YES, NO);
+               }
+#endif
                sftp_quit();
                exit(FILE_SIZE_MATCH_ERROR);
             }
@@ -1617,6 +1736,8 @@ main(int argc, char *argv[])
                trans_log(sign, __FILE__, __LINE__, NULL, msg_str,
                          "Failed to move remote file `%s' to `%s' (%d)",
                          initial_filename, remote_filename, status);
+               rm_dupcheck_crc(fullname, p_file_name_buffer,
+                               *p_file_size_buffer);
                sftp_quit();
                exit(eval_timeout(ret));
             }
@@ -1640,6 +1761,78 @@ main(int argc, char *argv[])
                /* Remove dot at end of name. */
                ptr = p_final_filename + strlen(p_final_filename) - 1;
                *ptr = '\0';
+            }
+         }
+
+         if (db.no_of_rhardlinks > 0)
+         {
+            int k;
+
+            for (k = 0; k < db.no_of_rhardlinks; k++)
+            {
+               if ((status = sftp_hardlink(remote_filename, db.hardlinks[k],
+                                           (db.special_flag & CREATE_TARGET_DIR) ? YES : NO,
+                                           db.dir_mode, created_path)) != SUCCESS)
+               {
+                  trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, msg_str,
+                            "Failed to create a hardlink from %s to %s (%d)",
+                            remote_filename, db.hardlinks[k], status);
+                  rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                  *p_file_size_buffer);
+                  sftp_quit();
+                  exit(eval_timeout(SYNTAX_ERROR));
+               }
+               else
+               {
+                  if (fsa->debug > NORMAL_MODE)
+                  {
+                     trans_db_log(INFO_SIGN, __FILE__, __LINE__, NULL,
+                                  "Created hardlink from `%s' to `%s'",
+                                  remote_filename, db.hardlinks[k]);
+                  }
+                  if ((created_path != NULL) && (created_path[0] != '\0'))
+                  {
+                     trans_log(INFO_SIGN, __FILE__, __LINE__, NULL, NULL,
+                               "Created directory `%s'.", created_path);
+                     created_path[0] = '\0';
+                  }
+               }
+            }
+         }
+
+         if (db.no_of_rsymlinks > 0)
+         {
+            int k;
+
+            for (k = 0; k < db.no_of_rsymlinks; k++)
+            {
+               if ((status = sftp_symlink(remote_filename, db.symlinks[k],
+                                          (db.special_flag & CREATE_TARGET_DIR) ? YES : NO,
+                                          db.dir_mode, created_path)) != SUCCESS)
+               {
+                  trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, msg_str,
+                            "Failed to create a symlink from `%s' to `%s' (%d)",
+                            remote_filename, db.symlinks[k], status);
+                  rm_dupcheck_crc(fullname, p_file_name_buffer,
+                                  *p_file_size_buffer);
+                  sftp_quit();
+                  exit(eval_timeout(SYNTAX_ERROR));
+               }
+               else
+               {
+                  if (fsa->debug > NORMAL_MODE)
+                  {
+                     trans_db_log(INFO_SIGN, __FILE__, __LINE__, NULL,
+                                  "Created symlink from `%s' to `%s'",
+                                  remote_filename, db.symlinks[k]);
+                  }
+                  if ((created_path != NULL) && (created_path[0] != '\0'))
+                  {
+                     trans_log(INFO_SIGN, __FILE__, __LINE__, NULL, NULL,
+                               "Created directory `%s'.", created_path);
+                     created_path[0] = '\0';
+                  }
+               }
             }
          }
 
@@ -1938,6 +2131,11 @@ try_again_unlink:
                             transfer_log_fd);
             }
          }
+#ifdef WITH_DUP_CHECK
+# ifndef FAST_SF_DUPCHECK
+         }
+# endif
+#endif
 
          p_file_name_buffer += MAX_FILENAME_LENGTH;
          p_file_size_buffer++;
@@ -2180,7 +2378,7 @@ sf_sftp_exit(void)
       }
 
       if ((fsa->job_status[(int)db.job_no].file_name_in_use[0] != '\0') &&
-          (fsa->file_size_offset != -1) &&
+          (p_initial_filename != NULL) && (fsa->file_size_offset != -1) &&
           (append_offset == 0) &&
           (fsa->job_status[(int)db.job_no].file_size_done > MAX_SEND_BEFORE_APPEND))
       {
@@ -2188,6 +2386,7 @@ sf_sftp_exit(void)
                     fsa->job_status[(int)db.job_no].file_name_in_use);
       }
       reset_fsa((struct job *)&db, exitflag, 0, 0);
+      fsa_detach_pos(db.fsa_pos);
    }
 
    free(file_name_buffer);
@@ -2229,7 +2428,8 @@ static void
 sig_kill(int signo)
 {
    exitflag = 0;
-   if (fsa->job_status[(int)db.job_no].unique_name[2] == 5)
+   if ((fsa != NULL) && (fsa_pos_save == YES) &&
+       (fsa->job_status[(int)db.job_no].unique_name[2] == 5))
    {
       exit(SUCCESS);
    }

@@ -1,6 +1,6 @@
 /*
  *  check_log.c - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 1996 - 2018 Holger Kiehl <Holger.Kiehl@dwd.de>
+ *  Copyright (c) 1996 - 2022 Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -44,6 +44,7 @@ DESCR__S_M1
  **                      information and then show in one block.
  **   27.12.2003 H.Kiehl Added trace toggle.
  **   26.03.2004 H.Kiehl Handle implementations with sticky EOF behaviour.
+ **   20.09.2022 H.Kiehl Replace unprintable characters with dot (.) sign.
  **
  */
 DESCR__E_M1
@@ -52,6 +53,9 @@ DESCR__E_M1
 #include <string.h>
 #include <stdlib.h>
 #include <sys/types.h>
+#ifdef HAVE_STATX
+# include <fcntl.h>                     /* Definition of AT_* constants */
+#endif
 #include <sys/stat.h>
 #include <unistd.h>
 #include <dirent.h>
@@ -93,7 +97,7 @@ static int            first_time = YES;
 static void           display_data(Widget, int *, int *, int *,
                                    unsigned int *, char *);
 
-#define MAX_LINES_IN_ONE_GO 100
+#define MAX_LINES_IN_ONE_GO 2000
 
 
 /*############################# check_log() #############################*/
@@ -112,7 +116,8 @@ check_log(Widget w)
 
    if (p_log_file != NULL)
    {
-      int          max_lines = 0;
+      int          i,
+                   max_lines = 0;
       size_t       length,
                    line_length = MAX_LINE_LENGTH + 1;
       unsigned int chars_buffered = 0;
@@ -128,8 +133,6 @@ check_log(Widget w)
       }
       if (no_of_hosts > 0)
       {
-         int i;
-
 #ifdef HAVE_GETLINE
          while ((length = getline(&line, &line_length, p_log_file)) != -1)
 #else
@@ -139,6 +142,17 @@ check_log(Widget w)
 #ifndef HAVE_GETLINE
             length = strlen(line);
 #endif
+            /* Check if line contains unprintable characters. */
+            i = 0;
+            while (i < length)
+            {
+               if ((line[i] < ' ') && (line[i] != '\n'))
+               {
+                  line[i] = '.';
+               }
+               i++;
+            }
+
             if ((length > 0) && (line[length - 1] == '\n'))
             {
                if (incomplete_line != NULL)
@@ -246,6 +260,17 @@ check_log(Widget w)
 #ifndef HAVE_GETLINE
             length = strlen(line);
 #endif
+            /* Check if line contains unprintable characters. */
+            i = 0;
+            while (i < length)
+            {
+               if ((line[i] < ' ') && (line[i] != '\n'))
+               {
+                  line[i] = '.';
+               }
+               i++;
+            }
+
             if ((length > 0) && (line[length - 1] == '\n'))
             {
                if (incomplete_line != NULL)
@@ -357,8 +382,12 @@ check_log(Widget w)
          (total_length > max_logfile_size))) &&
        (current_log_number == 0))
    {
-      char        log_file[MAX_PATH_LENGTH + 1 + MAX_FILENAME_LENGTH + 2];
-      struct stat stat_buf;
+      char         log_file[MAX_PATH_LENGTH + 1 + MAX_FILENAME_LENGTH + 2];
+#ifdef HAVE_STATX
+      struct statx stat_buf;
+#else
+      struct stat  stat_buf;
+#endif
 
       /*
        * When disk is full the process system_log/transfer_log will not
@@ -368,8 +397,14 @@ check_log(Widget w)
        * know that the log process has failed to create a new log file.
        */
       (void)sprintf(log_file, "%s/%s0", log_dir, log_name);
+#ifdef HAVE_STATX
+      if ((statx(0, log_file, AT_STATX_SYNC_AS_STAT,
+                 STATX_INO, &stat_buf) != -1) &&
+          (stat_buf.stx_ino != current_inode_no))
+#else
       if ((stat(log_file, &stat_buf) != -1) &&
           (stat_buf.st_ino != current_inode_no))
+#endif
       {
          /* Yup, time to change the log file! */
          if (p_log_file != NULL)
@@ -391,7 +426,11 @@ check_log(Widget w)
             XmTextSetString(w, NULL);  /* Clears all old entries. */
             (void)sprintf(str_line, "%*d", MAX_LINE_COUNTER_DIGITS, 0);
             XmTextSetString(counterbox, str_line);
+#ifdef HAVE_STATX
+            current_inode_no = stat_buf.stx_ino;
+#else
             current_inode_no = stat_buf.st_ino;
+#endif
          }
       }
    }

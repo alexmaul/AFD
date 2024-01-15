@@ -1,6 +1,6 @@
 /*
  *  init_text.c - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 1996 - 2020 Holger Kiehl <Holger.Kiehl@dwd.de>
+ *  Copyright (c) 1996 - 2023 Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -39,6 +39,12 @@ DESCR__S_M1
  **   16.03.1996 H.Kiehl Created
  **   31.05.1997 H.Kiehl Added debug toggle.
  **   27.12.2003 H.Kiehl Added trace toggle.
+ **   20.09.2022 H.Kiehl Replace unprintable characters with dot (.) sign.
+ **   24.08.2023 H.Kiehl Read file in hunks advertised by system
+ **                      (st_blksize).
+ **   27.08.2023 H.Kiehl If file is larger then what XmTextGetMaxLength()
+ **                      returns, just read the last number of bytes of
+ **                      the returned value.
  **
  */
 DESCR__E_M1
@@ -47,11 +53,11 @@ DESCR__E_M1
 #include <string.h>
 #include <stdlib.h>     /* calloc(), free()                              */
 #include <sys/types.h>
-#include <sys/stat.h>
-#ifdef HAVE_MMAP
-# include <sys/mman.h>  /* mmap(), munmap()                              */
+#ifdef HAVE_STATX
+# include <fcntl.h>     /* Definition of AT_* constants                  */
 #endif
-#include <unistd.h>
+#include <sys/stat.h>
+#include <unistd.h>     /* lseek()                                       */
 #include <X11/X.h>
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
@@ -62,6 +68,8 @@ DESCR__E_M1
 #include "mafd_ctrl.h"
 #include "mshow_log.h"
 #include "logdefs.h"
+
+#define HUNK_SIZE 268435456 /* 256 MiB */
 
 extern Display        *display;
 extern XtAppContext   app;
@@ -84,7 +92,7 @@ extern unsigned int   toggles_set_parallel_jobs;
 extern FILE           *p_log_file;
 
 /* Local function prototypes. */
-static void           read_text(void);
+static void           read_text(ino_t *);
 
 
 /*############################## init_text() ############################*/
@@ -117,28 +125,27 @@ init_text(void)
          }
          else
          {
-            read_text();
-            if ((log_type_flag != TRANSFER_LOG_TYPE) &&
-                (log_type_flag != RECEIVE_LOG_TYPE) &&
-                (i == 0))
-            {
-               struct stat stat_buf;
+            ino_t inode_no;
 
-               if (fstat(fileno(p_log_file), &stat_buf) == -1)
-               {
-                  (void)fprintf(stderr,
-                                "ERROR   : Could not fstat() %s : %s (%s %d)\n",
-                                log_file, strerror(errno), __FILE__, __LINE__);
-                  exit(INCORRECT);
-               }
-               current_inode_no = stat_buf.st_ino;
+            read_text(&inode_no);
+            if ((log_type_flag != TRANSFER_LOG_TYPE) &&
+                (log_type_flag != RECEIVE_LOG_TYPE) && (i == 0))
+            {
+               current_inode_no = inode_no;
             }
          }
       }
    }
    else
    {
-      read_text();
+      ino_t inode_no;
+
+      read_text(&inode_no);
+      if ((log_type_flag != TRANSFER_LOG_TYPE) &&
+          (log_type_flag != RECEIVE_LOG_TYPE) && (current_log_number == 0))
+      {
+         current_inode_no = inode_no;
+      }
    }
    XmTextShowPosition(log_output, wpr_position);
 
@@ -148,7 +155,7 @@ init_text(void)
 
 /*############################## read_text() ############################*/
 static void
-read_text(void)
+read_text(ino_t *inode_no)
 {
    int                  fd = fileno(p_log_file);
    char                 *src = NULL,
@@ -157,23 +164,71 @@ read_text(void)
                         *ptr_dst,
                         *ptr_start,
                         *ptr_line;
+#ifdef HAVE_STATX
+   struct statx         stat_buf;
+#else
    struct stat          stat_buf;
+#endif
    XSetWindowAttributes attrs;
    XEvent               event;
 
-   if (fstat(fd, &stat_buf) < 0)
+#ifdef HAVE_STATX
+   if (statx(fd, "", AT_STATX_SYNC_AS_STAT | AT_EMPTY_PATH,
+             STATX_SIZE, &stat_buf) == -1)
+#else
+   if (fstat(fd, &stat_buf) == -1)
+#endif
    {
-      (void)xrec(FATAL_DIALOG, "fstat() error : %s (%s %d)",
+      (void)xrec(FATAL_DIALOG, "Failed to access log file : %s (%s %d)",
                  strerror(errno), __FILE__, __LINE__);
       return;
    }
 
+#ifdef HAVE_STATX
+   if (stat_buf.stx_size > 0)
+#else
    if (stat_buf.st_size > 0)
+#endif
    {
-      int    length,
-             last = MISS;
-      size_t block_length;
-      off_t  tmp_total_length = 0;
+      int     length,
+              last = MISS,
+              max_hunk = XmTextGetMaxLength(log_output);
+      char    *read_ptr;
+      ssize_t bytes_read;
+      size_t  block_length,
+              read_size;
+      off_t   bytes_buffered = 0,
+              length_to_show = 0,
+              size,
+              tmp_total_length = 0;
+
+      /* XmText cannot display size bigger then max_hunk. */
+#ifdef HAVE_STATX
+      if (stat_buf.stx_size > max_hunk)
+#else
+      if (stat_buf.st_size > max_hunk)
+#endif
+      {
+#ifdef HAVE_STATX
+         if (lseek(fd, stat_buf.stx_size - (max_hunk - 4096), SEEK_SET) == -1)
+#else
+         if (lseek(fd, stat_buf.st_size - (max_hunk - 4096), SEEK_SET) == -1)
+#endif
+         {
+            (void)xrec(FATAL_DIALOG, "Failed to lseek() in log file : %s (%s %d)",
+                       strerror(errno), __FILE__, __LINE__);
+            return;
+         }
+         size = max_hunk - 4096;
+      }
+      else
+      {
+#ifdef HAVE_STATX
+         size = stat_buf.stx_size;
+#else
+         size = stat_buf.st_size;
+#endif
+      }
 
       /* Change cursor to indicate we are doing something. */
       attrs.cursor = cursor1;
@@ -181,41 +236,47 @@ read_text(void)
       XFlush(display);
 
       /* Copy file to memory. */
-#ifdef HAVE_MMAP
-      if (lseek(fd, stat_buf.st_size, SEEK_SET) == -1)
-      {
-         (void)xrec(FATAL_DIALOG, "lseek() error : %s (%s %d)",
-                    strerror(errno), __FILE__, __LINE__);
-         return;
-      }
-      if ((src = mmap(NULL, stat_buf.st_size, PROT_READ, MAP_SHARED,
-                      fd, 0)) == (caddr_t) -1)
-      {
-         (void)xrec(FATAL_DIALOG, "mmap() error : %s (%s %d)",
-                    strerror(errno), __FILE__, __LINE__);
-         return;
-      }
-#else
-      if ((src = malloc(stat_buf.st_size)) == NULL)
+      if ((src = malloc(size)) == NULL)
       {
          (void)xrec(FATAL_DIALOG, "malloc() error : %s (%s %d)",
                     strerror(errno), __FILE__, __LINE__);
          return;
       }
-      if (read(fd, src, stat_buf.st_size) != stat_buf.st_size)
+      read_ptr = src;
+      while (size > 0)
       {
-         int tmp_errno = errno;
+         if (size > HUNK_SIZE)
+         {
+            read_size = HUNK_SIZE;
+         }
+         else
+         {
+            read_size = size;
+         }
+         if ((bytes_read = read(fd, read_ptr, read_size)) == -1)
+         {
+            int tmp_errno = errno;
 
-         free(src);
-         (void)xrec(FATAL_DIALOG, "read() error : %s (%s %d)",
-                    strerror(tmp_errno), __FILE__, __LINE__);
-         return;
+            free(src);
+            (void)xrec(FATAL_DIALOG, "read() error : %s (%s %d)",
+                       strerror(tmp_errno), __FILE__, __LINE__);
+            return;
+         }
+         bytes_buffered += bytes_read;
+         read_ptr += bytes_read;
+         size -= bytes_read;
       }
-#endif
-      if ((dst = malloc(stat_buf.st_size + 1)) == NULL)
+      if ((dst = malloc(bytes_buffered + 1)) == NULL)
       {
+         free(src);
+         free(dst);
+#if SIZEOF_OFF_T == 4
          (void)xrec(FATAL_DIALOG, "malloc() error [%d bytes] : %s (%s %d)",
-                    stat_buf.st_size + 1, strerror(errno), __FILE__, __LINE__);
+#else
+         (void)xrec(FATAL_DIALOG, "malloc() error [%lld bytes] : %s (%s %d)",
+#endif
+                    (pri_off_t)(bytes_buffered + 1), strerror(errno),
+                    __FILE__, __LINE__);
          return;
       }
 
@@ -228,12 +289,18 @@ read_text(void)
       {
          int i;
 
-         while (tmp_total_length < stat_buf.st_size)
+         while (tmp_total_length < bytes_buffered)
          {
             length = 0;
             ptr_line = ptr;
-            while ((*ptr != '\n') && (*ptr != '\0'))
+            while ((*ptr != '\n') &&
+                   ((tmp_total_length + length) < bytes_buffered))
             {
+               /* Remove unprintable characters. */
+               if ((unsigned char)(*ptr) < ' ')
+               {
+                  *ptr = '.';
+               }
                length++; ptr++;
             }
             length++; ptr++;
@@ -277,6 +344,7 @@ read_text(void)
                         ptr_start = ptr - length;
                      }
                      block_length += length;
+                     length_to_show += length;
                      line_counter++;
                      last = HIT;
                   }
@@ -329,6 +397,7 @@ read_text(void)
                         ptr_start = ptr - length;
                      }
                      block_length += length;
+                     length_to_show += length;
                      line_counter++;
                      last = HIT;
                   }
@@ -349,12 +418,18 @@ read_text(void)
       }
       else
       {
-         while (tmp_total_length < stat_buf.st_size)
+         while (tmp_total_length < bytes_buffered)
          {
             length = 0;
             ptr_line = ptr;
-            while ((*ptr != '\n') && (*ptr != '\0'))
+            while ((*ptr != '\n') &&
+                   ((tmp_total_length + length) < bytes_buffered))
             {
+               /* Remove unprintable characters. */
+               if ((unsigned char)(*ptr) < ' ')
+               {
+                  *ptr = '.';
+               }
                length++; ptr++;
             }
             length++; ptr++;
@@ -389,6 +464,7 @@ read_text(void)
                      ptr_start = ptr - length;
                   }
                   block_length += length;
+                  length_to_show += length;
                   line_counter++;
                   last = HIT;
                }
@@ -420,6 +496,7 @@ read_text(void)
                      ptr_start = ptr - length;
                   }
                   block_length += length;
+                  length_to_show += length;
                   line_counter++;
                   last = HIT;
                }
@@ -432,15 +509,7 @@ read_text(void)
          *(ptr_dst + block_length) = '\0';
       }
 
-#ifdef HAVE_MMAP
-      if (munmap(src, stat_buf.st_size) < 0)
-      {
-         (void)xrec(WARN_DIALOG, "munmap() error : %s (%s %d)",
-                    strerror(errno), __FILE__, __LINE__);
-      }
-#else
       free(src);
-#endif
 
       if (wpr_position == 0)
       {
@@ -456,8 +525,8 @@ read_text(void)
          XtManageChild(log_output);
 #endif
       }
-      wpr_position += tmp_total_length;
-      total_length += tmp_total_length;
+      wpr_position += length_to_show;
+      total_length += length_to_show;
       free((void *)dst);
 
       attrs.cursor = None;
@@ -473,6 +542,15 @@ read_text(void)
       {
          /* do nothing */;
       }
+   }
+
+   if (inode_no != NULL)
+   {
+#ifdef HAVE_STATX
+      *inode_no = stat_buf.stx_ino;
+#else
+      *inode_no = stat_buf.st_ino;
+#endif
    }
 
    return;

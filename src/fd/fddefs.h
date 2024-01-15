@@ -1,6 +1,6 @@
 /*
  *  fddefs.h - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 1995 - 2021 Holger Kiehl <Holger.Kiehl@dwd.de>
+ *  Copyright (c) 1995 - 2023 Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -20,9 +20,11 @@
 #ifndef __fddefs_h
 #define __fddefs_h
 
+/* #define WITH_MULTI_FSA_CHECKS */
 /* #define DO_NOT_PARALLELIZE_ALL_FETCH 1 */
 /* #define DEBUG_ASSIGNMENT 1 */
 /* #define _RMQUEUE_ 1 */
+#define FAST_SF_DUPCHECK 1
 
 #include <time.h>                /* clock_t                              */
 
@@ -94,9 +96,6 @@
                                        /* FD.                            */
 #define CD_TIMEOUT               600   /* Timeout remote change          */
                                        /* directory (10min).             */
-#define RETRY_THRESHOLD          4     /* Threshold when to increase     */
-                                       /* aging factor for error jobs in */
-                                       /* queue.                         */
 
 /* Definitions of different exit status. */
 #define NO_MESSAGE               -2    /* When there are no more jobs to */
@@ -223,6 +222,8 @@
 #define NOOP_ERROR_STR           "Noop error"
 #define DELETE_REMOTE_ERROR      64
 #define DELETE_REMOTE_ERROR_STR  "Delete error"
+#define SET_BLOCKSIZE_ERROR      65
+#define SET_BLOCKSIZE_ERROR_STR  "Set blocksize error"
 /* NOTE: MAX_ERROR_STR_LENGTH    35 is defined in afddefs.h! */
 
 #ifdef _WITH_WMO_SUPPORT
@@ -349,6 +350,7 @@ struct append_data
 #endif /* _NEW_STUFF */
 
 /* Structure that holds the message cache of the FD. */
+#define CURRENT_MDB_VERSION 1
 struct msg_cache_buf
        {
           char         host_name[MAX_HOSTNAME_LENGTH + 1];
@@ -361,6 +363,7 @@ struct msg_cache_buf
                                        /*       will be -1.               */
           unsigned int job_id;
           unsigned int age_limit;
+          char         ageing;
           char         type;           /* FTP, SMTP or LOC (file) */
           char         in_current_fsa;
        };
@@ -456,12 +459,21 @@ struct job
           char           smtp_server[MAX_REAL_HOSTNAME_LENGTH];
                                          /* SMTP server name.            */
           char           timezone[MAX_TIMEZONE_LENGTH + 1];
+          char           te_malloc;      /* Flag to show if te pointer   */
+                                         /* was malloced.                */
           char           *group_mail_domain;
+          char           *index_file;    /* HTTP directory listing.      */
           int            no_of_restart_files;
           int            subject_rule_pos;
           int            trans_rule_pos;
           int            user_rule_pos;
           int            mail_header_rule_pos;
+          int            no_of_rhardlinks;
+          int            no_of_rsymlinks;
+          char           **hardlinks;    /* List of hardlinks to create  */
+                                         /* on remote site.              */
+          char           **symlinks;     /* List of symlinks to create   */
+                                         /* on remote site.              */
           char           **restart_file;
                                          /* When a transmission fails    */
                                          /* while it was transmitting a  */
@@ -798,6 +810,13 @@ struct trl_cache
           off_t trl_per_process;
        };
 
+struct ageing_table
+       {
+          double before_threshold;
+          double after_threshold;
+          int    retry_threshold;
+       };
+
 #define CHECK_INCREMENT_JOB_QUEUED(value)                \
         {                                                \
            if (((value) < 0) || ((value) > no_of_hosts)) \
@@ -899,6 +918,7 @@ extern int   append_compare(char *, char *),
              init_sf(int, char **, char *, int),
              init_sf_burst2(struct job *, char *, unsigned int *),
              lookup_job_id(unsigned int),
+             mdb_attach(void),
              noop_wrapper(void),
              read_current_msg_list(unsigned int **, int *),
              read_file_mask(char *, int *, struct file_mask **),
@@ -933,7 +953,10 @@ extern void  calc_trl_per_process(int),
              get_group_list(char *, struct job *),
              get_new_positions(void),
              handle_delete_fifo(int, size_t, char *),
+             handle_dupcheck_delete(char *, char *, char *, char *,
+                                    off_t, time_t, time_t),
              handle_proxy(void),
+             init_ageing_table(void),
              init_fra_data(void),
              init_gf(int, char **, int),
              init_gf_burst2(struct job *, unsigned int *),
@@ -969,6 +992,7 @@ extern void  calc_trl_per_process(int),
 #endif
              reset_fsa(struct job *, int, int, off_t),
              reset_values(int, off_t, int, off_t, struct job *),
+             rm_dupcheck_crc(char *, char *, off_t),
              send_proc_fin(int),
              system_log(char *, char *, int, char *, ...),
              trace_log(char *, int, int, char *, int, char *, ...),
@@ -981,4 +1005,6 @@ extern void  calc_trl_per_process(int),
                                      struct filetransfer_status *,
                                      struct job *),
              update_tfc(int, off_t, off_t *, int, int, time_t);
+extern char  *convert_mdb(int, char *, off_t *, int, unsigned char,
+                          unsigned char);
 #endif /* __fddefs_h */

@@ -1,7 +1,7 @@
 /*
  *  reread_host_config.c - Part of AFD, an automatic file distribution
  *                         program.
- *  Copyright (c) 1998 - 2019 Holger Kiehl <Holger.Kiehl@dwd.de>
+ *  Copyright (c) 1998 - 2023 Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -59,13 +59,21 @@ DESCR__S_M3
  **                      FSA.
  **   03.05.2007 H.Kiehl Changed function that it returns what was done.
  **   19.07.2019 H.Kiehl Simulate mode is stored in HOST_CONFIG.
+ **   07.02.2023 H.Kiehl Add check if host has been removed but is
+ **                      still in DIR_CONFIG. If that is the case
+ **                      put it back into the HOST_CONFIG.
  **
  */
 DESCR__E_M3
 
+#define CHECK_HOST_REMOVED_BUT_STILL_IN_DIR_CONFIG 1
+
 #include <string.h>              /* strerror(), memset(), strcmp(),      */
-                                 /* memcpy()                             */
+                                 /* memcpy(), memmove()                  */
 #include <stdlib.h>              /* malloc(), free()                     */
+#ifdef HAVE_STATX
+# include <fcntl.h>              /* Definition of AT_* constants         */
+#endif
 #include <sys/stat.h>
 #include <sys/wait.h>            /* WNOHANG                              */
 #include <unistd.h>
@@ -94,15 +102,25 @@ reread_host_config(time_t           *hc_old_time,
                    int              inform_fd)
 {
    int         ret = NO_CHANGE_IN_HOST_CONFIG;
+#ifdef HAVE_STATX
+   struct statx stat_buf;
+#else
    struct stat stat_buf;
+#endif
 
    /* Get the size of the database file. */
-   if (stat(host_config_file, &stat_buf) < 0)
+#ifdef HAVE_STATX
+   if (statx(0, host_config_file, AT_STATX_SYNC_AS_STAT,
+             STATX_MTIME, &stat_buf) == -1)
+#else
+   if (stat(host_config_file, &stat_buf) == -1)
+#endif
    {
       if (errno == ENOENT)
       {
-         system_log(INFO_SIGN, NULL, 0,
-                    "Recreating HOST_CONFIG file with %d hosts.", no_of_hosts);
+         update_db_log(INFO_SIGN, NULL, 0, debug_fp, warn_counter,
+                       "Recreating HOST_CONFIG file with %d hosts.",
+                       no_of_hosts);
          *hc_old_time = write_host_config(no_of_hosts, host_config_file, hl);
          return(HOST_CONFIG_RECREATED);
       }
@@ -116,7 +134,11 @@ reread_host_config(time_t           *hc_old_time,
    }
 
    /* Check if HOST_CONFIG has changed. */
+#ifdef HAVE_STATX
+   if (*hc_old_time < stat_buf.stx_mtime.tv_sec)
+#else
    if (*hc_old_time < stat_buf.st_mtime)
+#endif
    {
       int              dir_check_stopped = NO,
                        dummy_1,
@@ -126,9 +148,16 @@ reread_host_config(time_t           *hc_old_time,
                        i,
                        j,
                        new_no_of_hosts,
+#ifdef CHECK_HOST_REMOVED_BUT_STILL_IN_DIR_CONFIG
+                       no_of_hosts_put_back = 0,
+#endif
                        no_of_host_changed = 0;
       size_t           dummy_3;
       char             *mark_list = NULL;
+#ifdef CHECK_HOST_REMOVED_BUT_STILL_IN_DIR_CONFIG
+      char             *host_list_put_back = NULL,
+                       *p_host_list_put_back;
+#endif
       struct host_list *dummy_hl;
 
       if (old_no_of_hosts == NULL)
@@ -152,7 +181,11 @@ reread_host_config(time_t           *hc_old_time,
       system_log(INFO_SIGN, NULL, 0, "Rereading HOST_CONFIG...");
 
       /* Now store the new time. */
+#ifdef HAVE_STATX
+      *hc_old_time = stat_buf.stx_mtime.tv_sec;
+#else
       *hc_old_time = stat_buf.st_mtime;
+#endif
 
       /* Reread HOST_CONFIG file. */
       if (hl != NULL)
@@ -174,6 +207,7 @@ reread_host_config(time_t           *hc_old_time,
       {
          system_log(DEBUG_SIGN, __FILE__, __LINE__,
                     "Hmm, no old HOST_CONFIG data!");
+         *old_no_of_hosts = 0;
       }
 
       /*
@@ -200,7 +234,111 @@ reread_host_config(time_t           *hc_old_time,
                     "malloc() error : %s", strerror(errno));
          exit(INCORRECT);
       }
-      (void)memset(mark_list, NO, *old_no_of_hosts);
+
+#ifdef CHECK_HOST_REMOVED_BUT_STILL_IN_DIR_CONFIG
+      /* First lets search if any host_alias has been removed */
+      /* that is still in DIR_CONFIG. If that is the case     */
+      /* put it back into the HOST_CONFIG.                    */
+      (void)memset(mark_list, NO, (unsigned int)(*old_no_of_hosts));
+      for (i = 0; i < new_no_of_hosts; i++)
+      {
+         for (j = 0; j < *old_no_of_hosts; j++)
+         {
+            if ((mark_list[j] == NO) &&
+                (CHECK_STRCMP(hl[i].host_alias, (*old_hl)[j].host_alias) == 0))
+            {
+               mark_list[j] = YES;
+               break;
+            }
+         }
+      }
+      for (i = 0; i < *old_no_of_hosts; i++)
+      {
+         if (mark_list[i] == NO)
+         {
+            for (j = 0; j < no_of_hosts; j++)
+            {
+               if (CHECK_STRCMP(fsa[j].host_alias,
+                                (*old_hl)[i].host_alias) == 0)
+               {
+                  if (fsa[j].special_flag & HOST_IN_DIR_CONFIG)
+                  {
+                     if (((new_no_of_hosts + 1) % HOST_BUF_SIZE) == 0)
+                     {
+                        size_t new_size;
+
+                        /* Host still in DIR_CONFIG, put it back. */
+                        new_size = (((new_no_of_hosts + 1) / HOST_BUF_SIZE) + 1) *
+                                   HOST_BUF_SIZE * sizeof(struct host_list);
+                        if ((hl = realloc(hl, new_size)) == NULL)
+                        {
+                           system_log(FATAL_SIGN, __FILE__, __LINE__,
+                                      _("Could not reallocate memory for host list : %s"),
+                                      strerror(errno));
+                           exit(INCORRECT);
+                        }
+                     }
+
+                     /* Try put it back at same position where it was. */
+                     if (i < new_no_of_hosts)
+                     {
+                        memmove(&hl[i + 1], &hl[i],
+                                (new_no_of_hosts - i) * sizeof(struct host_list));
+                        memcpy(&hl[i], (&(*old_hl)[i]), sizeof(struct host_list));
+                     }
+                     else
+                     {
+                        /* Put it to the end. */
+                        memcpy(&hl[new_no_of_hosts], (&(*old_hl)[i]),
+                               sizeof(struct host_list));
+                        host_order_changed = YES;
+                     }
+                     mark_list[i] = YES;
+                     new_no_of_hosts++;
+
+                     no_of_hosts_put_back++;
+                     if (host_list_put_back == NULL)
+                     {
+                        if ((host_list_put_back = malloc(MAX_HOSTNAME_LENGTH + 4)) == NULL)
+                        {
+                           system_log(FATAL_SIGN, __FILE__, __LINE__,
+                                      _("Could not allocate memory for host list put back : %s"),
+                                      strerror(errno));
+                           exit(INCORRECT);
+                        }
+                        p_host_list_put_back = host_list_put_back +
+                                               snprintf(host_list_put_back,
+                                                        MAX_HOSTNAME_LENGTH + 1,
+                                                        "%s",
+                                                        (*old_hl)[i].host_alias);
+                     }
+                     else
+                     {
+                        int offset = p_host_list_put_back - host_list_put_back;
+
+                        if ((host_list_put_back = realloc(host_list_put_back,
+                                                          (MAX_HOSTNAME_LENGTH + 4) * no_of_hosts_put_back)) == NULL)
+                        {
+                           system_log(FATAL_SIGN, __FILE__, __LINE__,
+                                      _("Could not reallocate memory for host list put back : %s"),
+                                      strerror(errno));
+                           exit(INCORRECT);
+                        }
+                        p_host_list_put_back = host_list_put_back + offset;
+                        p_host_list_put_back += snprintf(p_host_list_put_back,
+                                                         2 + MAX_HOSTNAME_LENGTH + 1,
+                                                         ", %s",
+                                                         (*old_hl)[i].host_alias);
+                     }
+                  }
+                  break;
+               }
+            } /* for (j = 0; j < no_of_hosts; j++) */
+         }
+      }
+#endif /* CHECK_HOST_REMOVED_BUT_STILL_IN_DIR_CONFIG */
+
+      (void)memset(mark_list, NO, (unsigned int)(*old_no_of_hosts));
       for (i = 0; i < new_no_of_hosts; i++)
       {
          host_pos = INCORRECT;
@@ -234,7 +372,7 @@ reread_host_config(time_t           *hc_old_time,
                {
                   int options;
 
-                  if (com(STOP) == INCORRECT)
+                  if (com(STOP, __FILE__, __LINE__) == INCORRECT)
                   {
                      options = WNOHANG;
                   }
@@ -424,6 +562,26 @@ reread_host_config(time_t           *hc_old_time,
          }
       } /* for (i = 0; i < new_no_of_hosts; i++) */
 
+#ifdef CHECK_HOST_REMOVED_BUT_STILL_IN_DIR_CONFIG
+      if (no_of_hosts_put_back > 0)
+      {
+         *hc_old_time = write_host_config(new_no_of_hosts, host_config_file, hl);
+         if (no_of_hosts_put_back > 1)
+         {
+            update_db_log(WARN_SIGN, NULL, 0, debug_fp, warn_counter,
+                          "%d hosts (%s) had to be put back to HOST_CONFIG because they are still in DIR_CONFIG",
+                          no_of_hosts_put_back, host_list_put_back);
+         }
+         else
+         {
+            update_db_log(WARN_SIGN, NULL, 0, debug_fp, warn_counter,
+                          "Host (%s) had to be put back to HOST_CONFIG because it is still in DIR_CONFIG",
+                          host_list_put_back);
+         }
+         free(host_list_put_back);
+      }
+#endif
+
       if (host_order_changed != YES)
       {
          if (new_no_of_hosts != no_of_hosts)
@@ -452,8 +610,8 @@ reread_host_config(time_t           *hc_old_time,
 
       if (no_of_host_changed > 0)
       {
-         system_log(INFO_SIGN, NULL, 0,
-                    "%d host changed in HOST_CONFIG.", no_of_host_changed);
+         update_db_log(INFO_SIGN, NULL, 0, debug_fp, warn_counter,
+                       "%d host changed in HOST_CONFIG.", no_of_host_changed);
          ret = HOST_CONFIG_DATA_CHANGED;
       }
 
@@ -496,7 +654,7 @@ reread_host_config(time_t           *hc_old_time,
          {
             int options;
 
-            if (com(STOP) == INCORRECT)
+            if (com(STOP, __FILE__, __LINE__) == INCORRECT)
             {
                options = WNOHANG;
             }
@@ -512,7 +670,8 @@ reread_host_config(time_t           *hc_old_time,
             }
             dir_check_stopped = YES;
          }
-         system_log(INFO_SIGN, NULL, 0, "Changing host alias order.");
+         update_db_log(INFO_SIGN, NULL, 0, debug_fp, warn_counter,
+                       "Changing host alias order.");
          if (ret == HOST_CONFIG_DATA_CHANGED)
          {
             ret = HOST_CONFIG_DATA_ORDER_CHANGED;
@@ -543,8 +702,8 @@ reread_host_config(time_t           *hc_old_time,
    }
    else
    {
-      system_log(INFO_SIGN, __FILE__, __LINE__,
-                 "There is no change in the HOST_CONFIG file.");
+      update_db_log(INFO_SIGN, NULL, 0, debug_fp, warn_counter,
+                    "There is no change in the HOST_CONFIG file.");
    }
 
    return(ret);

@@ -1,6 +1,6 @@
 /*
  *  afd_mon.c - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 1997 - 2021 Deutscher Wetterdienst (DWD),
+ *  Copyright (c) 1997 - 2023 Deutscher Wetterdienst (DWD),
  *                            Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
@@ -85,6 +85,7 @@ DESCR__S_M1
  **   14.02.2015 H.Kiehl In system log show total no_of_hosts, no_of_dirs
  **                      and no_of_jobs.
  **   01.08.2020 H.Kiehl Added support for systemd.
+ **   22.04.2023 H.Kiehl Add support for aldad.
  **
  */
 DESCR__E_M1
@@ -143,7 +144,8 @@ int                    daemon_log_fd = -1,
 long                   tcp_timeout = 120L;     /* not used (mon_log()) */
 off_t                  msa_size;
 size_t                 proc_list_size;
-pid_t                  mon_log_pid,
+pid_t                  aldad_pid,
+                       mon_log_pid,
                        own_pid,
                        sys_log_pid;
 time_t                 afd_mon_db_time;
@@ -212,7 +214,11 @@ main(int argc, char *argv[])
    char           *fifo_buffer,
                   *ptr,
                   work_dir[MAX_PATH_LENGTH];
+#ifdef HAVE_STATX
+   struct statx   stat_buf;
+#else
    struct stat    stat_buf;
+#endif
    struct timeval timeout;
    struct tm      *p_ts;
    fd_set         rset;
@@ -318,8 +324,14 @@ main(int argc, char *argv[])
          exit(INCORRECT);
       }
       (void)strcat(sys_log_fifo, MON_SYS_LOG_FIFO);
+#ifdef HAVE_STATX
+      if ((statx(0, sys_log_fifo, AT_STATX_SYNC_AS_STAT,
+                 STATX_MODE, &stat_buf) == -1) ||
+          (!S_ISFIFO(stat_buf.stx_mode)))
+#else
       if ((stat(sys_log_fifo, &stat_buf) == -1) ||
           (!S_ISFIFO(stat_buf.st_mode)))
+#endif
       {
          if (make_fifo(sys_log_fifo) < 0)
          {
@@ -378,14 +390,23 @@ main(int argc, char *argv[])
    /*
     * Read AFD_MON_DB file and create MSA (Monitor Status Area).
     */
+#ifdef HAVE_STATX
+   if (statx(0, afd_mon_db_file, AT_STATX_SYNC_AS_STAT,
+             STATX_MTIME, &stat_buf) == -1)
+#else
    if (stat(afd_mon_db_file, &stat_buf) == -1)
+#endif
    {
       (void)fprintf(stderr,
-                    "ERROR   : Could not stat() %s : %s (%s %d)\n",
+                    "ERROR   : Could not access %s : %s (%s %d)\n",
                     afd_mon_db_file, strerror(errno), __FILE__, __LINE__);
       exit(INCORRECT);
    }
+#ifdef HAVE_STATX
+   afd_mon_db_time = stat_buf.stx_mtime.tv_sec;
+#else
    afd_mon_db_time = stat_buf.st_mtime;
+#endif
    create_msa();
 
    /* Check if -nd is provided. */
@@ -531,17 +552,30 @@ main(int argc, char *argv[])
       if ((status == 0) && (got_shuttdown_message == NO) &&
           (now >= afd_mon_db_check_time))
       {
+#ifdef HAVE_STATX
+         if (statx(0, afd_mon_db_file, AT_STATX_SYNC_AS_STAT,
+                   STATX_MTIME, &stat_buf) == -1)
+#else
          if (stat(afd_mon_db_file, &stat_buf) == -1)
+#endif
          {
             system_log(ERROR_SIGN, __FILE__, __LINE__,
-                       "Could not stat() %s : %s",
+                       "Could not access %s : %s",
                        afd_mon_db_file, strerror(errno));
             exit(INCORRECT);
          }
+#ifdef HAVE_STATX
+         if (stat_buf.stx_mtime.tv_sec != afd_mon_db_time)
+#else
          if (stat_buf.st_mtime != afd_mon_db_time)
+#endif
          {
             system_log(INFO_SIGN, NULL, 0, "Rereading AFD_MON_CONFIG.");
+#ifdef HAVE_STATX
+            afd_mon_db_time = stat_buf.stx_mtime.tv_sec;
+#else
             afd_mon_db_time = stat_buf.st_mtime;
+#endif
 #ifdef WITH_SYSTEMD
             UPDATE_HEARTBEAT();
 #endif
@@ -924,6 +958,42 @@ zombie_check(time_t now)
            system_log(ERROR_SIGN, __FILE__, __LINE__,
                       "waitpid() error : %s", strerror(errno));
         }
+   if ((ret = waitpid(aldad_pid, &status, WNOHANG)) == aldad_pid)
+   {
+      int ret_stat;
+
+      p_afd_mon_status->aldad = OFF;
+      if ((ret_stat = WIFEXITED(status)))
+      {
+         system_log(ERROR_SIGN, __FILE__, __LINE__,
+                    "ALDA daemon of %s terminated with %d.", AFD_MON, ret_stat);
+         aldad_pid = 0;
+      }
+      else if (WIFSIGNALED(status))
+           {
+              /* Abnormal termination. */
+              system_log(ERROR_SIGN, __FILE__, __LINE__,
+                         "Abnormal termination of ALDA daemon of %s, caused by signal %d.",
+                         AFD_MON, WTERMSIG(status));
+              aldad_pid = 0;
+           }
+
+      /* Restart log process. */
+      system_log(INFO_SIGN, NULL, 0,
+                 "Restart %s aldad process.", AFD_MON);
+      if ((aldad_pid = start_process(ALDAD, -2)) < 0)
+      {
+         system_log(FATAL_SIGN, __FILE__, __LINE__,
+                    "Could not start ALDA daemon process for AFD_MON.");
+         exit(INCORRECT);
+      }
+      p_afd_mon_status->aldad = ON;
+   }
+   else if (ret == -1)
+        {
+           system_log(ERROR_SIGN, __FILE__, __LINE__,
+                      "waitpid() error : %s", strerror(errno));
+        }
 
    /*
     * Now check if all mon processes are still alive.
@@ -1093,30 +1163,53 @@ start_afdmon(int *group_elements)
                   old_afd_mon_stat;
       char        hostname[64],
                   *ptr;
+#ifdef HAVE_STATX
+      struct statx stat_buf;
+#else
       struct stat stat_buf;
+#endif
 
+#ifdef HAVE_STATX
+      if (statx(0, afd_mon_db_file, AT_STATX_SYNC_AS_STAT,
+                STATX_MTIME, &stat_buf) == -1)
+#else
       if (stat(afd_mon_db_file, &stat_buf) == -1)
+#endif
       {
          (void)fprintf(stderr,
                        "ERROR   : Could not stat() %s : %s (%s %d)\n",
                        afd_mon_db_file, strerror(errno), __FILE__, __LINE__);
          exit(INCORRECT);
       }
+#ifdef HAVE_STATX
+      if (afd_mon_db_time != stat_buf.stx_mtime.tv_sec)
+#else
       if (afd_mon_db_time != stat_buf.st_mtime)
+#endif
       {
+#ifdef HAVE_STATX
+         afd_mon_db_time = stat_buf.stx_mtime.tv_sec;
+#else
          afd_mon_db_time = stat_buf.st_mtime;
+#endif
          create_msa();
       }
 #ifdef WITH_SYSTEMD
       UPDATE_HEARTBEAT();
 #endif
 
+#ifdef HAVE_STATX
+      if ((statx(0, afd_mon_status_file, AT_STATX_SYNC_AS_STAT,
+                 STATX_SIZE, &stat_buf) == -1) ||
+          (stat_buf.stx_size != sizeof(struct afd_mon_status)))
+#else
       if ((stat(afd_mon_status_file, &stat_buf) == -1) ||
           (stat_buf.st_size != sizeof(struct afd_mon_status)))
+#endif
       {
          if (errno != ENOENT)
          {
-            (void)fprintf(stderr, "Failed to stat() %s : %s (%s %d)\n",
+            (void)fprintf(stderr, "Failed to access %s : %s (%s %d)\n",
                           afd_mon_status_file, strerror(errno),
                           __FILE__, __LINE__);
             exit(INCORRECT);
@@ -1216,6 +1309,14 @@ start_afdmon(int *group_elements)
          exit(INCORRECT);
       }
       p_afd_mon_status->mon_log = ON;
+      if ((aldad_pid = start_process(ALDAD, -2)) < 0)
+      {
+         (void)fprintf(stderr,
+                       "ERROR   : Could not start ALDA daemon for AFD_MON. (%s %d)\n",
+                       __FILE__, __LINE__);
+         exit(INCORRECT);
+      }
+      p_afd_mon_status->aldad = ON;
 
       p_afd_mon_status->start_time = time(NULL);
       system_log(INFO_SIGN, NULL, 0,
@@ -1295,7 +1396,7 @@ mon_active(void)
                  "Failed to create %s : %s", mon_active_file, strerror(errno));
       exit(INCORRECT);
    }
-   size = ((3 + no_of_afds + no_of_afds) * sizeof(pid_t)) + sizeof(int) + 1;
+   size = ((4 + no_of_afds + no_of_afds) * sizeof(pid_t)) + sizeof(int) + 1;
    if ((buffer = malloc(size)) == NULL)
    {
       system_log(ERROR_SIGN, __FILE__, __LINE__,
@@ -1310,6 +1411,8 @@ mon_active(void)
    *(pid_t *)ptr = sys_log_pid;
    ptr += sizeof(pid_t);
    *(pid_t *)ptr = mon_log_pid;
+   ptr += sizeof(pid_t);
+   *(pid_t *)ptr = aldad_pid;
    ptr += sizeof(pid_t);
    *(int *)ptr = no_of_afds;
    ptr += sizeof(int);

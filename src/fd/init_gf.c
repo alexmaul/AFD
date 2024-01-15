@@ -1,6 +1,6 @@
 /*
  *  init_gf.c - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 2000 - 2021 Holger Kiehl <Holger.Kiehl@dwd.de>
+ *  Copyright (c) 2000 - 2023 Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -121,6 +121,7 @@ init_gf(int argc, char *argv[], int protocol)
    db.dir_mode = 0;
    db.dir_mode_str[0] = '\0';
    db.user_home_dir = NULL;
+   db.index_file = NULL;
 /* db.password[0] = '\0'; */
 #ifdef WITH_SSH_FINGERPRINT
 /* db.ssh_fingerprint[0] = '\0'; */
@@ -155,7 +156,7 @@ init_gf(int argc, char *argv[], int protocol)
    if ((db.special_flag & OLD_ERROR_JOB) &&
        ((fra->queued == 1) ||
         (((db.special_flag & DISTRIBUTED_HELPER_JOB) == 0) &&
-         (fra->dir_flag & ONE_PROCESS_JUST_SCANNING))))
+         (fra->dir_options & ONE_PROCESS_JUST_SCANNING))))
    {
       /* No need to do any locking in get_remote_file_names_xxx(). */
       db.special_flag &= ~OLD_ERROR_JOB;
@@ -182,6 +183,7 @@ init_gf(int argc, char *argv[], int protocol)
                     "Could not malloc() memory : %s", strerror(errno));
          exit(ALLOC_ERROR);
       }
+      db.te_malloc = YES;
       if (eval_time_str("* * * * *", db.te, NULL) != SUCCESS)
       {
          system_log(ERROR_SIGN, __FILE__, __LINE__,
@@ -192,6 +194,7 @@ init_gf(int argc, char *argv[], int protocol)
    }
    else
    {
+      db.te_malloc = NO;
       db.te = &fra->te[0];
       (void)strcpy(db.timezone, fra->timezone);
    }
@@ -222,6 +225,16 @@ init_gf(int argc, char *argv[], int protocol)
    else
    {
       next_check_time = 0;
+   }
+   if ((protocol & HTTP_FLAG) && (fra->dir_options & URL_WITH_INDEX_FILE_NAME))
+   {
+      if ((db.index_file = malloc(MAX_RECIPIENT_LENGTH)) == NULL)
+      {
+         system_log(ERROR_SIGN, __FILE__, __LINE__,
+                    "Could not malloc() memory for index file : %s",
+                    strerror(errno));
+         exit(ALLOC_ERROR);
+      }
    }
    if (eval_recipient(fra->url, &db, NULL,
                        next_check_time) == INCORRECT)

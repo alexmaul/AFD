@@ -1,6 +1,6 @@
 /*
  *  fd_check_fsa.c - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 2002 - 2019 Holger Kiehl <Holger.Kiehl@dwd.de>
+ *  Copyright (c) 2002 - 2023 Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -66,6 +66,9 @@ extern int                        fsa_id;
 #ifdef _WITH_BURST_2
 extern int                        no_of_hosts;
 #endif
+#ifndef WITH_MULTI_FSA_CHECKS
+extern int                        fsa_out_of_sync;
+#endif
 #ifdef HAVE_MMAP
 extern off_t                      fsa_size;
 #endif
@@ -127,15 +130,19 @@ fd_check_fsa(void)
       if (gotcha == NO)
       {
          system_log(ERROR_SIGN, __FILE__, __LINE__,
-                    "AMG does not reset REREADING_DIR_CONFIG flag!");
+                    "AMG does not reset REREADING_DIR_CONFIG flag! FSA of FD out of sync!");
 
          /*
           * Not sure what the cause is, but sometimes it does not
           * detect that REREADING_DIR_CONFIG flag is not unset, due
           * to maybe someone holding the FSA or some other error.
-          * So lets just exit and ask init_afd to restart FD.
+          * To exit here with PROCESS_NEEDS_RESTART does also not
+          * work well, AMG+FD are then out of sync and creating when
+          * FD creates a new process it takes a very long time.
           */
-         exit(PROCESS_NEEDS_RESTART);
+#ifndef WITH_MULTI_FSA_CHECKS
+         fsa_out_of_sync = YES;
+#endif
       }
 #ifdef DEBUG_WAIT_LOOP
       else
@@ -148,7 +155,7 @@ fd_check_fsa(void)
 
       ptr = (char *)fsa;
       ptr -= AFD_WORD_OFFSET;
-      if (*(int *)ptr == STALE)
+      if ((*(int *)ptr == STALE) || (fsa_check_id_changed(fsa_id) == YES))
       {
 #ifdef HAVE_MMAP
          if (munmap(ptr, fsa_size) == -1)
@@ -173,6 +180,14 @@ fd_check_fsa(void)
             exit(INCORRECT);
          }
          (void)snprintf(str_fsa_id, MAX_INT_LENGTH, "%d", fsa_id);
+#ifndef WITH_MULTI_FSA_CHECKS
+         if (fsa_out_of_sync == YES)
+         {
+            system_log(INFO_SIGN, __FILE__, __LINE__,
+                       "FSA of FD in sync again.");
+            fsa_out_of_sync = NO;
+         }
+#endif
 
          return(YES);
       }
