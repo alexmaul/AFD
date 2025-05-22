@@ -48,6 +48,7 @@ DESCR__S_M1
  **   08.09.2022 A.Maul  Re-write the show_olog function and add main(),
  **                      to use resend from command-line instead from
  **                      show_olog dialog.
+ **   21.05.2025 A.Maul  Fix reconstructing archivepath/filename.
  **
  */
 DESCR__E_M1
@@ -110,9 +111,10 @@ static char             archive_dir[MAX_PATH_LENGTH],
 
 struct resend_list
 {
-   unsigned int 		job_id;
-   char 				*archive_name;
-   char 				status; /* DONE - file has been resend. */
+   unsigned int 		    job_id;
+   char 				        *archive_name;
+   off_t                file_name_offs;
+   char 				        status; /* DONE - file has been resend. */
 };
 
 /* Local function prototypes. */
@@ -220,6 +222,7 @@ resend_files(int no_selected, char **select_list)
       }
       rl[i].job_id = (unsigned int) strtoul(jobid_buffer, NULL, 16);
       rl[i].archive_name = select_list[i];
+      rl[i].file_name_offs = p_file_name - p_archive_name;
       rl[i].status = FILE_PENDING;
       to_do++;
    }
@@ -257,6 +260,7 @@ resend_files(int no_selected, char **select_list)
              (current_job_id == rl[k].job_id))
          {
             (void)strcpy(p_archive_name, rl[k].archive_name);
+            p_file_name = p_archive_name + rl[k].file_name_offs;
             if (eaccess(archive_dir, R_OK) != 0)
             {
                rl[k].status = NOT_IN_ARCHIVE;
