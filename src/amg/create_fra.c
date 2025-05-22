@@ -1,6 +1,6 @@
 /*
  *  create_fra.c - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 2000 - 2023 Holger Kiehl <Holger.Kiehl@dwd.de>
+ *  Copyright (c) 2000 - 2024 Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -486,10 +486,14 @@ create_fra(int no_of_dirs)
          {
             fra[i].dir_options |= DO_NOT_MOVE;
          }
-         if (dd[i].do_not_get_dir_list == YES)
+         if (dd[i].get_dir_list == NO)
          {
             fra[i].dir_options |= DONT_GET_DIR_LIST;
          }
+         else if (dd[i].get_dir_list == FORCE_HREF)
+              {
+                 fra[i].dir_options |= GET_DIR_LIST_HREF;
+              }
          if (dd[i].url_creates_file_name == YES)
          {
             fra[i].dir_options |= URL_CREATES_FILE_NAME;
@@ -509,6 +513,10 @@ create_fra(int no_of_dirs)
          if (dd[i].one_process_just_scaning == YES)
          {
             fra[i].dir_options |= ONE_PROCESS_JUST_SCANNING;
+         }
+         if (dd[i].dir_zero_size == YES)
+         {
+            fra[i].dir_options |= DIR_ZERO_SIZE;
          }
          if (dd[i].create_source_dir == YES)
          {
@@ -687,11 +695,23 @@ create_fra(int no_of_dirs)
                fra[i].dir_options ^= DO_NOT_MOVE;
             }
             if (((fra[i].dir_options & DONT_GET_DIR_LIST) &&
-                 (dd[i].do_not_get_dir_list == NO)) ||
+                 (dd[i].get_dir_list == YES)) ||
                 (((fra[i].dir_options & DONT_GET_DIR_LIST) == 0) &&
-                 (dd[i].do_not_get_dir_list == YES)))
+                 (dd[i].get_dir_list == NO)))
             {
                fra[i].dir_options ^= DONT_GET_DIR_LIST;
+               fra[i].dir_options &= ~GET_DIR_LIST_HREF;
+            }
+            else
+            {
+               if (((fra[i].dir_options & GET_DIR_LIST_HREF) &&
+                    (dd[i].get_dir_list != FORCE_HREF)) ||
+                   (((fra[i].dir_options & GET_DIR_LIST_HREF) == 0) &&
+                    (dd[i].get_dir_list == FORCE_HREF)))
+               {
+                  fra[i].dir_options ^= GET_DIR_LIST_HREF;
+                  fra[i].dir_options &= ~DONT_GET_DIR_LIST;
+               }
             }
             if (((fra[i].dir_options & URL_CREATES_FILE_NAME) &&
                  (dd[i].url_creates_file_name == NO)) ||
@@ -727,6 +747,13 @@ create_fra(int no_of_dirs)
                  (dd[i].one_process_just_scaning == YES)))
             {
                fra[i].dir_options ^= ONE_PROCESS_JUST_SCANNING;
+            }
+            if (((fra[i].dir_options & DIR_ZERO_SIZE) &&
+                 (dd[i].dir_zero_size == NO)) ||
+                (((fra[i].dir_options & DIR_ZERO_SIZE) == 0) &&
+                 (dd[i].dir_zero_size == YES)))
+            {
+               fra[i].dir_options ^= DIR_ZERO_SIZE;
             }
             if ((dd[i].create_source_dir == NO) &&
                 (fra[i].dir_mode != 0))
@@ -850,10 +877,14 @@ create_fra(int no_of_dirs)
             {
                fra[i].dir_options |= DO_NOT_MOVE;
             }
-            if (dd[i].do_not_get_dir_list == YES)
+            if (dd[i].get_dir_list == NO)
             {
                fra[i].dir_options |= DONT_GET_DIR_LIST;
             }
+            else if (dd[i].get_dir_list == FORCE_HREF)
+                 {
+                    fra[i].dir_options |= GET_DIR_LIST_HREF;
+                 }
             if (dd[i].url_creates_file_name == YES)
             {
                fra[i].dir_options |= URL_CREATES_FILE_NAME;
@@ -873,6 +904,10 @@ create_fra(int no_of_dirs)
             if (dd[i].one_process_just_scaning == YES)
             {
                fra[i].dir_options |= ONE_PROCESS_JUST_SCANNING;
+            }
+            if (dd[i].dir_zero_size == YES)
+            {
+               fra[i].dir_options |= DIR_ZERO_SIZE;
             }
             if (dd[i].create_source_dir == YES)
             {

@@ -1,6 +1,6 @@
 /*
  *  authcmd.c - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 2021, 2022 Holger Kiehl <Holger.Kiehl@dwd.de>
+ *  Copyright (c) 2021 - 2025 Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -73,6 +73,10 @@ DESCR__E_M3
 # define EVP_MD_CTX_free EVP_MD_CTX_destroy
 #endif
 
+#ifndef EVP_MAX_MD_SIZE
+# define EVP_MAX_MD_SIZE 64
+#endif
+
 /* Hash types function str2hash knows. */
 #define AFD_MD5        1
 #define AFD_SHA256     2
@@ -81,16 +85,16 @@ DESCR__E_M3
 /* External global variables. */
 extern char msg_str[];
 
-#ifdef WITH_SSL
 /* Local function prototypes. */
+#ifdef WITH_SSL
 static int     aws4_cmd_authentication(char *, char *, char *, char *,
                                        struct http_message_reply *),
                aws_cmd_no_sign_request(struct http_message_reply *),
                sha256_file(char *, char *),
                str2hash(int, char *, int, char *);
 static void    hash_2_hex(const unsigned char *, const int, char *);
-#endif
 static int32_t get_random(void);
+#endif
 
 
 /*######################## basic_authentication() #######################*/
@@ -175,6 +179,7 @@ basic_authentication(struct http_message_reply *p_hmr)
 }
 
 
+#ifdef WITH_SSL
 /*####################### digest_authentication() #######################*/
 int
 digest_authentication(char                      *method,
@@ -310,39 +315,49 @@ digest_authentication(char                      *method,
                int  uri_length;
                char *str2hash_a2;
 
-               if (path_length == 0)
+               /* Check if filename already has path. */
+               if (filename[0] == '/')
                {
-                  uri_str[0] = '/';
-                  uri_length = 1;
+                  (void)memcpy(uri_str, filename, filename_length);
+                  uri_length = filename_length;
                }
                else
                {
-                  if (path[0] != '/')
+                  if (path_length == 0)
                   {
                      uri_str[0] = '/';
                      uri_length = 1;
                   }
                   else
                   {
-                     uri_length = 0;
+                     if (path[0] != '/')
+                     {
+                        uri_str[0] = '/';
+                        uri_length = 1;
+                     }
+                     else
+                     {
+                        uri_length = 0;
+                     }
+                     (void)memcpy(&uri_str[uri_length], path, path_length);
+                     uri_length += path_length;
+                     if ((uri_length > 0) && (uri_str[uri_length] == '/'))
+                     {
+                        uri_str[uri_length] = '\0';
+                        uri_length--;
+                     }
                   }
-                  (void)memcpy(&uri_str[uri_length], path, path_length);
-                  uri_length += path_length;
-                  if ((uri_length > 0) && (uri_str[uri_length] == '/'))
+                  if (filename_length > 0)
                   {
-                     uri_str[uri_length] = '\0';
-                     uri_length--;
+                     if (uri_str[uri_length - 1] != '/')
+                     {
+                        uri_str[uri_length] = '/';
+                        uri_length++;
+                     }
+                     (void)memcpy(&uri_str[uri_length], filename,
+                                  filename_length);
+                     uri_length += filename_length;
                   }
-               }
-               if (filename_length > 0)
-               {
-                  if (uri_str[uri_length - 1] != '/')
-                  {
-                     uri_str[uri_length] = '/';
-                     uri_length++;
-                  }
-                  (void)memcpy(&uri_str[uri_length], filename, filename_length);
-                  uri_length += filename_length;
                }
                uri_str[uri_length] = '\0';
 
@@ -825,7 +840,6 @@ digest_authentication(char                      *method,
 }
 
 
-#ifdef WITH_SSL
 /*############################# aws_cmd() ###############################*/
 int
 aws_cmd(char                      *cmd,

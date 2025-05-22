@@ -7,20 +7,21 @@ Group: Applications/Communications
 Prefix: @prefix@
 Source0: %{name}-%{version}.tar.bz2
 Requires: @REQUIRES@
-%if 0%{?rhl}%{?fedora}
+%if 0%{?rhl}%{?fedora}%{?rhel}
 BuildRequires: @BUILD_REQUIRES_REDHAT@
 %else
 BuildRequires: @BUILD_REQUIRES@
 %endif
 URL: https://www.dwd.de/AFD/
 
-%define distro_style_rpms      @DISTRO_STYLE_RPMS@
-%define INITDIR                @INITDIR@
-%define BINARY_OWNER           @BINARY_OWNER@
-%define BINARY_GROUP           @BINARY_GROUP@
-%define with_systemd           @WITH_SYSTMD@
-%define with_afdmon            @WITH_AFD_MON_SPEC@
-%define cleaned_configure_args @cleaned_configure_args@
+%define distro_style_rpms        @DISTRO_STYLE_RPMS@
+%define INITDIR                  @INITDIR@
+%define BINARY_OWNER             @BINARY_OWNER@
+%define BINARY_GROUP             @BINARY_GROUP@
+%define with_systemd             @WITH_SYSTMD@
+%define with_afdmon              @WITH_AFD_MON_SPEC@
+%define cleaned_configure_args   @cleaned_configure_args@
+%define with_dir_check_cap_chown @WITH_DIR_CHECK_CAP_CHOWN@
 
 %if %{distro_style_rpms}
    %define prefix     %{_prefix}
@@ -136,7 +137,6 @@ else
 fi
 make DESTDIR=$RPM_BUILD_ROOT install
 %if %{with_systemd}
-   install -p -m644 scripts/afd.service $RPM_BUILD_ROOT/%{_unitdir}
    install -p -m644 scripts/afd@.service $RPM_BUILD_ROOT/%{_unitdir}
    install -p -m644 scripts/afd.target $RPM_BUILD_ROOT/%{_unitdir}
    install -p -m644 scripts/afd_environment.conf $RPM_BUILD_ROOT/%{sysconfdir}/afd
@@ -406,7 +406,6 @@ exit 0
 %files
 %defattr(-,root,root)
 %if %{with_systemd}
-%{_unitdir}/afd.service
 %{_unitdir}/afd@.service
 %{_unitdir}/afd.target
 %config(noreplace) %{sysconfdir}/afd/afd_environment.conf
@@ -428,6 +427,9 @@ exit 0
 %doc %{mandir}/man5/*
 %{prefix}/bin/*
 %{prefix}/sbin/*
+%if %{with_dir_check_cap_chown}
+%attr(-,root,root) %caps(cap_chown=p) %{_bindir}/dir_check
+%endif
 
 
 %changelog

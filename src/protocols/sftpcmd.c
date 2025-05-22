@@ -1,6 +1,6 @@
 /*
  *  sftpcmd.c - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 2005 - 2023 Holger Kiehl <Holger.Kiehl@dwd.de>
+ *  Copyright (c) 2005 - 2025 Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -100,6 +100,14 @@ DESCR__S_M3
  **                      process to terminate.
  **   30.05.2023 H.Kiehl Added functions sftp_hardlink() and sftp_symlink().
  **   15.06.2023 H.Kiehl Add support for support2 structure of Version 6.
+ **   26.02.2025 H.Kiehl If sftp_mkdir() fails with SSH_FX_FAILURE,
+ **                      check with sftp_stat() if someone else has
+ **                      created the directory.
+ **   26.04.2025 H.Kiehl Added option keep_connected_set to sftp_connect()
+ **                      so set ServerAliveInterval can be set when keep
+ **                      connected is set.
+ **   11.05.2025 H.Kiehl In sftp_stat() only send flags when protocol
+ **                      version is 6 or higher.
  **
  */
 DESCR__E_M3
@@ -129,74 +137,6 @@ DESCR__E_M3
 #define DIR_NOT_EXIST_WORKAROUND 1
 
 
-#define SFTP_CD_TRY_CREATE_DIR()                                          \
-        {                                                                 \
-           if ((create_dir == YES) && (retries == 0) &&                   \
-               (get_xfer_uint(&msg[5]) == SSH_FX_NO_SUCH_FILE))           \
-           {                                                              \
-              char *p_start,                                              \
-                   *ptr,                                                  \
-                   tmp_char;                                              \
-                                                                          \
-              ptr = directory;                                            \
-              do                                                          \
-              {                                                           \
-                 while (*ptr == '/')                                      \
-                 {                                                        \
-                    ptr++;                                                \
-                 }                                                        \
-                 p_start = ptr;                                           \
-                 while ((*ptr != '/') && (*ptr != '\0'))                  \
-                 {                                                        \
-                    ptr++;                                                \
-                 }                                                        \
-                 if ((*ptr == '/') || (*ptr == '\0'))                     \
-                 {                                                        \
-                    tmp_char = *ptr;                                      \
-                    *ptr = '\0';                                          \
-                    if ((status = sftp_stat(directory, NULL)) != SUCCESS) \
-                    {                                                     \
-                       status = sftp_mkdir(directory, dir_mode);          \
-                       if (status == SUCCESS)                             \
-                       {                                                  \
-                          if (created_path != NULL)                       \
-                          {                                               \
-                              if (created_path[0] != '\0')                \
-                              {                                           \
-                                 (void)strcat(created_path, "/");         \
-                              }                                           \
-                              (void)strcat(created_path, p_start);        \
-                          }                                               \
-                       }                                                  \
-                    }                                                     \
-                    else if (scd.version > 3)                             \
-                         {                                                \
-                            if (scd.stat_buf.st_mode != S_IFDIR)          \
-                            {                                             \
-                               status = INCORRECT;                        \
-                            }                                             \
-                         }                                                \
-                    *ptr = tmp_char;                                      \
-                 }                                                        \
-              } while ((*ptr != '\0') && (status == SUCCESS));            \
-                                                                          \
-              if ((*ptr == '\0') && (status == SUCCESS))                  \
-              {                                                           \
-                 retries++;                                               \
-                 goto retry_cd;                                           \
-              }                                                           \
-           }                                                              \
-           else                                                           \
-           {                                                              \
-              /* Some error has occured. */                               \
-              get_msg_str(&msg[9]);                                       \
-              trans_log(DEBUG_SIGN, __FILE__, __LINE__, "sftp_cd", NULL,  \
-                        "%s", error_2_str(&msg[5]));                      \
-              status = INCORRECT;                                         \
-           }                                                              \
-        }
-
-
 /* External global variables. */
 extern int                      simulation_mode,
                                 timeout_flag;
@@ -217,13 +157,14 @@ static unsigned short           get_xfer_uint16(char *);
 static unsigned int             get_xfer_uint(char *);
 static u_long_64                get_xfer_uint64(char *);
 static int                      check_msg_pending(void),
-                                get_limits(void),
+                                get_limits(int),
                                 get_reply(unsigned int, unsigned int *, int),
                                 get_write_reply(unsigned int, int),
                                 get_xfer_names(unsigned int, unsigned int, char *),
                                 get_xfer_str(char *, char **),
                                 is_with_path(char *),
                                 read_msg(char *, int, int),
+                                sftp_create_dir(char *, mode_t, char *),
                                 store_attributes(unsigned int, char *,
                                                  unsigned int *, struct stat *),
                                 write_msg(char *, int, int);
@@ -251,6 +192,9 @@ sftp_connect(char          *hostname,
              int           port,
              unsigned char ssh_protocol,
              int           ssh_options,
+#ifndef FORCE_SFTP_NOOP
+             int           keep_connected_set,
+#endif
              char          *user,
 #ifdef WITH_SSH_FINGERPRINT
              char          *fingerprint,
@@ -335,8 +279,9 @@ retry_connect:
       return(SUCCESS);
    }
 
-   if ((status = ssh_exec(hostname, port, ssh_protocol, ssh_options, user,
-                          passwd, NULL, "sftp", &data_fd)) == SUCCESS)
+   if ((status = ssh_exec(hostname, port, ssh_protocol, ssh_options,
+                          keep_connected_set, user, passwd, NULL,
+                          "sftp", &data_fd)) == SUCCESS)
    {
       unsigned int ui_var = 5;
 
@@ -441,7 +386,7 @@ retry_connect:
 
                         if (scd.limits == 1)
                         {
-                           if (get_limits() != SUCCESS)
+                           if (get_limits(YES) != SUCCESS)
                            {
                               /* Set some default values. */
                               scd.oss_limits.max_packet_length = INITIAL_SFTP_MSG_LENGTH;
@@ -899,7 +844,7 @@ eval_version_extensions(char *msg, unsigned int ui_var)
 
 /*+++++++++++++++++++++++++++++ get_limits() ++++++++++++++++++++++++++++*/
 static int
-get_limits(void)
+get_limits(int store_value)
 {
    int status;
 #ifdef WITH_TRACE
@@ -938,14 +883,17 @@ get_limits(void)
          {
             if ((msg_length - 1 - 4) >= (8 + 8 + 8 + 8))
             {
-               scd.oss_limits.max_packet_length = get_xfer_uint64(&msg[5]);
-               scd.oss_limits.max_read_length = get_xfer_uint64(&msg[5 + 8]);
-               scd.oss_limits.max_write_length = get_xfer_uint64(&msg[5 + 8 + 8]);
-               scd.oss_limits.max_open_handles = get_xfer_uint64(&msg[5 + 8 + 8 + 8]);
-               if ((scd.oss_limits.max_open_handles > 0) &&
-                   (scd.oss_limits.max_open_handles < MAX_SFTP_REPLY_BUFFER))
+               if (store_value == YES)
                {
-                  scd.max_open_handles = scd.oss_limits.max_open_handles;
+                  scd.oss_limits.max_packet_length = get_xfer_uint64(&msg[5]);
+                  scd.oss_limits.max_read_length = get_xfer_uint64(&msg[5 + 8]);
+                  scd.oss_limits.max_write_length = get_xfer_uint64(&msg[5 + 8 + 8]);
+                  scd.oss_limits.max_open_handles = get_xfer_uint64(&msg[5 + 8 + 8 + 8]);
+                  if ((scd.oss_limits.max_open_handles > 0) &&
+                      (scd.oss_limits.max_open_handles < MAX_SFTP_REPLY_BUFFER))
+                  {
+                     scd.max_open_handles = scd.oss_limits.max_open_handles;
+                  }
                }
             }
             else
@@ -970,10 +918,13 @@ get_limits(void)
       }
       else if (status == SIMULATION)
            {
-              scd.oss_limits.max_packet_length = INITIAL_SFTP_MSG_LENGTH;
-              scd.oss_limits.max_read_length   = MIN_SFTP_BLOCKSIZE;
-              scd.oss_limits.max_write_length  = MIN_SFTP_BLOCKSIZE;
-              scd.oss_limits.max_open_handles  = SFTP_DEFAULT_MAX_OPEN_REQUEST;
+              if (store_value == YES)
+              {
+                 scd.oss_limits.max_packet_length = INITIAL_SFTP_MSG_LENGTH;
+                 scd.oss_limits.max_read_length   = MIN_SFTP_BLOCKSIZE;
+                 scd.oss_limits.max_write_length  = MIN_SFTP_BLOCKSIZE;
+                 scd.oss_limits.max_open_handles  = SFTP_DEFAULT_MAX_OPEN_REQUEST;
+              }
               status = SUCCESS;
            }
    }
@@ -1322,10 +1273,27 @@ retry_cd:
                      char *tmp_cwd = scd.cwd;
 
                      scd.cwd = NULL;
-                     if (sftp_stat(tmp_cwd, NULL) != SUCCESS)
+                     if ((sftp_stat(tmp_cwd, NULL) != SUCCESS) &&
+                         (timeout_flag == OFF))
                      {
-                        SFTP_CD_TRY_CREATE_DIR();
-                        free(scd.cwd);
+                        if ((create_dir == YES) && (retries == 0) &&
+                            (get_xfer_uint(&msg[5]) == SSH_FX_NO_SUCH_FILE))
+                        {
+                           if ((status = sftp_create_dir(directory, dir_mode,
+                                                         created_path)) == SUCCESS)
+                           {
+                              retries++;
+                              goto retry_cd;
+                           }
+                        }
+                        else
+                        {
+                           /* Some error has occured. */
+                           get_msg_str(&msg[9]);
+                           trans_log(DEBUG_SIGN, __FILE__, __LINE__, "sftp_cd", NULL,
+                                     "%s", error_2_str(&msg[5]));
+                           status = INCORRECT;
+                        }
                      }
                      scd.cwd = tmp_cwd;
                   }
@@ -1345,57 +1313,11 @@ retry_cd:
          {
             if (msg[0] == SSH_FXP_STATUS)
             {
-#ifdef MACRO_DEBUG
                if ((create_dir == YES) && (retries == 0) &&
                    (get_xfer_uint(&msg[5]) == SSH_FX_NO_SUCH_FILE))
                {
-                  char *p_start,
-                       *ptr,
-                       tmp_char;
-
-                  ptr = directory;
-                  do
-                  {
-                     while (*ptr == '/')
-                     {
-                        ptr++;
-                     }
-                     p_start = ptr;
-                     while ((*ptr != '/') && (*ptr != '\0'))
-                     {
-                        ptr++;
-                     }
-                     if ((*ptr == '/') || (*ptr == '\0'))
-                     {
-                        tmp_char = *ptr;
-                        *ptr = '\0';
-                        if ((status = sftp_stat(directory, NULL)) != SUCCESS)
-                        {
-                           status = sftp_mkdir(directory, dir_mode);
-                           if (status == SUCCESS)
-                           {
-                              if (created_path != NULL)
-                              {
-                                  if (created_path[0] != '\0')
-                                  {
-                                     (void)strcat(created_path, "/");
-                                  }
-                                  (void)strcat(created_path, p_start);
-                              }
-                           }
-                        }
-                        else if (scd.version > 3)
-                             {
-                                if (scd.stat_buf.st_mode != S_IFDIR)
-                                {
-                                   status = INCORRECT;
-                                }
-                             }
-                        *ptr = tmp_char;
-                     }
-                  } while ((*ptr != '\0') && (status == SUCCESS));
-
-                  if ((*ptr == '\0') && (status == SUCCESS))
+                  if ((status = sftp_create_dir(directory, dir_mode,
+                                                created_path)) == SUCCESS)
                   {
                      retries++;
                      goto retry_cd;
@@ -1407,11 +1329,8 @@ retry_cd:
                   get_msg_str(&msg[9]);
                   trans_log(DEBUG_SIGN, __FILE__, __LINE__, "sftp_cd", NULL,
                             "%s", error_2_str(&msg[5]));
-                  status = get_xfer_uint(&msg[5]);
+                  status = INCORRECT;
                }
-#else
-               SFTP_CD_TRY_CREATE_DIR();
-#endif
             }
             else
             {
@@ -1564,33 +1483,34 @@ sftp_stat(char *filename, struct stat *p_stat_buf)
            }
    }
    pos = 4 + 1 + 4 + 4 + status;
-   if (scd.version > 4)
+   if (scd.version > 5)
    {
-      set_xfer_uint(&msg[pos],
-                    (SSH_FILEXFER_ATTR_SIZE | SSH_FILEXFER_ATTR_MODIFYTIME));
-#ifdef WITH_TRACE
-      if ((scd.debug == TRACE_MODE) || (scd.debug == FULL_TRACE_MODE))
+      if (p_stat_buf != NULL)
       {
-         length += snprintf(msg_str + length, MAX_RET_MSG_LENGTH - length,
-                            " attributes=%d (SSH_FILEXFER_ATTR_SIZE | SSH_FILEXFER_ATTR_MODIFYTIME)",
-                            SSH_FILEXFER_ATTR_SIZE | SSH_FILEXFER_ATTR_MODIFYTIME);
-      }
-#endif
-   }
-   else
-   {
-      set_xfer_uint(&msg[pos],
-                    (SSH_FILEXFER_ATTR_SIZE | SSH_FILEXFER_ATTR_ACMODTIME));
+         set_xfer_uint(&msg[pos],
+                       (SSH_FILEXFER_ATTR_SIZE | SSH_FILEXFER_ATTR_MODIFYTIME));
 #ifdef WITH_TRACE
-      if ((scd.debug == TRACE_MODE) || (scd.debug == FULL_TRACE_MODE))
-      {
-         length += snprintf(msg_str + length, MAX_RET_MSG_LENGTH - length,
-                            " attributes=%d (SSH_FILEXFER_ATTR_SIZE | SSH_FILEXFER_ATTR_ACMODTIME)",
-                            SSH_FILEXFER_ATTR_SIZE | SSH_FILEXFER_ATTR_ACMODTIME);
-      }
+         if ((scd.debug == TRACE_MODE) || (scd.debug == FULL_TRACE_MODE))
+         {
+            length += snprintf(msg_str + length, MAX_RET_MSG_LENGTH - length,
+                               " attributes=%d (SSH_FILEXFER_ATTR_SIZE | SSH_FILEXFER_ATTR_MODIFYTIME)",
+                               SSH_FILEXFER_ATTR_SIZE | SSH_FILEXFER_ATTR_MODIFYTIME);
+         }
 #endif
+      }
+      else
+      {
+         set_xfer_uint(&msg[pos], 0);
+#ifdef WITH_TRACE
+         if ((scd.debug == TRACE_MODE) || (scd.debug == FULL_TRACE_MODE))
+         {
+            length += snprintf(msg_str + length, MAX_RET_MSG_LENGTH - length,
+                               " attributes=0");
+         }
+#endif
+      }
+      pos += 4;
    }
-   pos += 4;
    set_xfer_uint(msg, (pos - 4)); /* Write message length at start. */
 #ifdef WITH_TRACE
    if ((scd.debug == TRACE_MODE) || (scd.debug == FULL_TRACE_MODE))
@@ -1621,7 +1541,8 @@ sftp_stat(char *filename, struct stat *p_stat_buf)
                  /* Some error has occured. */
                  get_msg_str(&msg[9]);
                  trans_log(DEBUG_SIGN, __FILE__, __LINE__, "sftp_stat", NULL,
-                           "%s", error_2_str(&msg[5]));
+                           "%s [cwd=%s filename=%s]", error_2_str(&msg[5]),
+                           (scd.cwd == NULL) ? "" : scd.cwd, filename);
                  status = get_xfer_uint(&msg[5]);
               }
               else
@@ -1850,10 +1771,14 @@ sftp_open_file(int    openmode,
                char   *filename,
                off_t  offset,
                mode_t *mode,
+               int    create_dir,
+               mode_t dir_mode,
+               char   *created_path,
                int    blocksize,
                int    *buffer_offset)
 {
    int pos,
+       retries = 0,
        status;
 #ifdef WITH_TRACE
    int length = 0;
@@ -1873,6 +1798,7 @@ sftp_open_file(int    openmode,
     * uint32 flags
     * ATTRS  attrs
     */
+retry_open_file:
    msg[4] = SSH_FXP_OPEN;
    scd.request_id++;
    set_xfer_uint(&msg[4 + 1], scd.request_id);
@@ -2103,11 +2029,88 @@ sftp_open_file(int    openmode,
          }
          else if (msg[0] == SSH_FXP_STATUS)
               {
-                 /* Some error has occured. */
-                 get_msg_str(&msg[9]);
-                 trans_log(DEBUG_SIGN, __FILE__, __LINE__,
-                           "sftp_open_file", NULL, "%s", error_2_str(&msg[5]));
-                 status = get_xfer_uint(&msg[5]);
+                 unsigned int ret_status;
+
+                 ret_status = get_xfer_uint(&msg[5]);
+                 if (ret_status != SSH_FX_OK)
+                 {
+                    if ((((ret_status == SSH_FX_FAILURE) &&
+                          (scd.version < 5)) ||
+                         ((ret_status == SSH_FX_NO_SUCH_FILE) &&
+                          (create_dir == YES) &&
+                          (is_with_path(filename) == YES))) &&
+                        (retries == 0))
+                    {
+                       if (ret_status == SSH_FX_NO_SUCH_FILE)
+                       {
+                          char tmp_filename[MAX_PATH_LENGTH],
+                               *ptr;
+
+                          ptr = filename + strlen(filename) - 1;
+                          while ((*ptr != '/') && (ptr != filename))
+                          {
+                             ptr--;
+                          }
+                          if ((*ptr == '/') && (filename != ptr))
+                          {
+                             char *p_filename,
+                                  *tmp_cwd = scd.cwd;
+
+                             *ptr = '\0';
+                             if (tmp_cwd == NULL)
+                             {
+                                p_filename = filename;
+                             }
+                             else
+                             {
+                                scd.cwd = NULL;
+                                (void)snprintf(tmp_filename, MAX_PATH_LENGTH,
+                                               "%s/%s", tmp_cwd, filename);
+                                p_filename = tmp_filename;
+                             }
+                             if ((status = sftp_create_dir(p_filename, dir_mode,
+                                                           created_path)) == SUCCESS)
+                             {
+                                retries++;
+                                *ptr = '/';
+                                scd.cwd = tmp_cwd;
+                                goto retry_open_file;
+                             }
+                             else
+                             {
+                                *ptr = '/';
+                                scd.cwd = tmp_cwd;
+                             }
+                          }
+                          else
+                          {
+                             trans_log(DEBUG_SIGN, __FILE__, __LINE__,
+                                       "sftp_open_file", NULL,
+                                       _("Hmm, something wrong here bailing out."));
+                             msg_str[0] = '\0';
+                             status = INCORRECT;
+                          }
+                       }
+                       else
+                       {
+                          trans_log(DEBUG_SIGN, __FILE__, __LINE__,
+                                    "sftp_open_file", NULL,
+                                    _("Hmm, something wrong here bailing out."));
+                          msg_str[0] = '\0';
+                          status = INCORRECT;
+                       }
+                    }
+                    else
+                    {
+                       /* Some error has occured. */
+                       get_msg_str(&msg[9]);
+                       trans_log(DEBUG_SIGN, __FILE__, __LINE__,
+                                 "sftp_open_file", NULL,
+                                 "%s [retries=%d]",
+                                 error_2_str(&msg[5]), retries);
+                       status = ret_status;
+                    }
+                 }
               }
               else
               {
@@ -2394,6 +2397,25 @@ sftp_close_dir(void)
 
    if (scd.pipe_broken == YES)
    {
+      if (scd.dir_handle != NULL)
+      {
+         free(scd.dir_handle);
+         scd.dir_handle = NULL;
+         scd.dir_handle_length = 0;
+
+         if (scd.nl != NULL)
+         {
+            int i;
+
+            for (i = 0; i < scd.nl_length; i++)
+            {
+               free(scd.nl[i].name);
+            }
+            scd.nl_length = 0;
+            free(scd.nl);
+            scd.nl = NULL;
+         }
+      }
       return(EPIPE);
    }
 
@@ -2555,11 +2577,16 @@ sftp_mkdir(char *directory, mode_t dir_mode)
    if ((status = write_msg(msg, (4 + 1 + 4 + 4 + status + 4 + attr_len),
                            __LINE__)) == SUCCESS)
    {
-      if ((status = get_reply(scd.request_id, NULL, __LINE__)) == SUCCESS)
+      unsigned int ret_msg_length;
+
+      if ((status = get_reply(scd.request_id,
+                              &ret_msg_length, __LINE__)) == SUCCESS)
       {
          if (msg[0] == SSH_FXP_STATUS)
          {
-            if (get_xfer_uint(&msg[5]) == SSH_FX_OK)
+            unsigned int ret_status;
+
+            if ((ret_status = get_xfer_uint(&msg[5])) == SSH_FX_OK)
             {
                if (dir_mode != 0)
                {
@@ -2578,10 +2605,57 @@ sftp_mkdir(char *directory, mode_t dir_mode)
             else
             {
                /* Some error has occured. */
-               get_msg_str(&msg[9]);
-               trans_log(DEBUG_SIGN, __FILE__, __LINE__, "sftp_mkdir", NULL,
-                         "%s", error_2_str(&msg[5]));
-               status = get_xfer_uint(&msg[5]);
+               if (ret_status == SSH_FX_FAILURE)
+               {
+                  int         tmp_status;
+                  char        *tmp_msg;
+                  struct stat rdir_stat_buf;
+
+                  /* Lets store the current returned status. */
+                  if ((tmp_msg = malloc(ret_msg_length)) == NULL)
+                  {
+                     trans_log(ERROR_SIGN, __FILE__, __LINE__, "sftp_connect", NULL,
+                               _("malloc() error : %s"), strerror(errno));
+                     return(INCORRECT);
+                  }
+                  (void)memcpy(tmp_msg, msg, ret_msg_length);
+
+                  /*
+                   * If there are several process trying to create
+                   * the same directory at the same time only one
+                   * will be successful. So check if we lost the
+                   * race and the directory exists ie. another
+                   * process was quicker.
+                   */
+                  if (((tmp_status = sftp_stat(directory, &rdir_stat_buf)) == SUCCESS) &&
+                      (S_ISDIR(rdir_stat_buf.st_mode)))
+                  {
+                     trans_log(DEBUG_SIGN, __FILE__, __LINE__,
+                               "sftp_mkdir", NULL,
+                               _("Direcctory `%s' does already exist."),
+                               directory);
+                     ret_status = SSH_FX_OK;
+                     status = SUCCESS;
+                  }
+                  else
+                  {
+                     /* Put back the original status msg. */
+                     (void)memcpy(msg, tmp_msg, ret_msg_length);
+
+                     if (timeout_flag == PIPE_CLOSED)
+                     {
+                        status = tmp_status;
+                     }
+                  }
+                  free(tmp_msg);
+               }
+               if (ret_status != SSH_FX_OK)
+               {
+                  get_msg_str(&msg[9]);
+                  trans_log(DEBUG_SIGN, __FILE__, __LINE__, "sftp_mkdir", NULL,
+                            "%s", error_2_str(&msg[5]));
+                  status = ret_status;
+               }
             }
          }
          else
@@ -2764,20 +2838,18 @@ retry_move:
                                           "%s/%s", tmp_cwd, to);
                            p_to = full_to;
                         }
-
-                        /*
-                         * NOTE: We do NOT want to go into this directory.
-                         *       We just misuse sftp_cd() to create the
-                         *       directory for us, nothing more.
-                         */
-                        if ((status = sftp_cd(p_to, YES, dir_mode,
-                                              created_path)) == SUCCESS)
+                        if ((status = sftp_create_dir(p_to, dir_mode,
+                                                      created_path)) == SUCCESS)
                         {
                            retries++;
                            *ptr = '/';
-                           free(scd.cwd);
                            scd.cwd = tmp_cwd;
                            goto retry_move;
+                        }
+                        else
+                        {
+                           *ptr = '/';
+                           scd.cwd = tmp_cwd;
                         }
                      }
                      else
@@ -2805,7 +2877,7 @@ retry_move:
                   get_msg_str(&msg[9]);
                   trans_log(DEBUG_SIGN, __FILE__, __LINE__, "sftp_move", NULL,
                             "%s", error_2_str(&msg[5]));
-                  status = get_xfer_uint(&msg[5]);
+                  status = ret_status;
                }
             }
          }
@@ -3975,20 +4047,18 @@ retry_hardlink:
                                              "%s/%s", tmp_cwd, to);
                               p_to = full_to;
                            }
-
-                           /*
-                            * NOTE: We do NOT want to go into this directory.
-                            *       We just misuse sftp_cd() to create the
-                            *       directory for us, nothing more.
-                            */
-                           if ((status = sftp_cd(p_to, YES, dir_mode,
-                                                 created_path)) == SUCCESS)
+                           if ((status = sftp_create_dir(p_to, dir_mode,
+                                                         created_path)) == SUCCESS)
                            {
                               retries++;
                               *ptr = '/';
-                              free(scd.cwd);
                               scd.cwd = tmp_cwd;
                               goto retry_hardlink;
+                           }
+                           else
+                           {
+                              *ptr = '/';
+                              scd.cwd = tmp_cwd;
                            }
                         }
                         else
@@ -4016,7 +4086,7 @@ retry_hardlink:
                      get_msg_str(&msg[9]);
                      trans_log(DEBUG_SIGN, __FILE__, __LINE__, "sftp_hardlink", NULL,
                                "%s", error_2_str(&msg[5]));
-                     status = get_xfer_uint(&msg[5]);
+                     status = ret_status;
                   }
                }
             }
@@ -4203,20 +4273,18 @@ retry_symlink:
                                              "%s/%s", tmp_cwd, to);
                               p_to = full_to;
                            }
-
-                           /*
-                            * NOTE: We do NOT want to go into this directory.
-                            *       We just misuse sftp_cd() to create the
-                            *       directory for us, nothing more.
-                            */
-                           if ((status = sftp_cd(p_to, YES, dir_mode,
-                                                 created_path)) == SUCCESS)
+                           if ((status = sftp_create_dir(p_to, dir_mode,
+                                                         created_path)) == SUCCESS)
                            {
                               retries++;
                               *ptr = '/';
-                              free(scd.cwd);
                               scd.cwd = tmp_cwd;
                               goto retry_symlink;
+                           }
+                           else
+                           {
+                              *ptr = '/';
+                              scd.cwd = tmp_cwd;
                            }
                         }
                         else
@@ -4244,7 +4312,7 @@ retry_symlink:
                      get_msg_str(&msg[9]);
                      trans_log(DEBUG_SIGN, __FILE__, __LINE__, "sftp_symlink", NULL,
                                "%s", error_2_str(&msg[5]));
-                     status = get_xfer_uint(&msg[5]);
+                     status = ret_status;
                   }
                }
             }
@@ -4433,8 +4501,21 @@ sftp_noop(void)
 #ifdef WITH_TRACE
    if ((scd.debug == TRACE_MODE) || (scd.debug == FULL_TRACE_MODE))
    {
-      trace_log(__FILE__, __LINE__, C_TRACE, NULL, 0,
-                "sftp_noop(): Calling sftp_stat(\".\", NULL)");
+# ifdef FORCE_SFTP_NOOP
+      if (scd.limits == 1)
+      {
+         trace_log(__FILE__, __LINE__, C_TRACE, NULL, 0,
+                   "sftp_noop(): Calling get_limits(NO)");
+      }
+      else
+      {
+         trace_log(__FILE__, __LINE__, C_TRACE, NULL, 0,
+                   "sftp_noop(): Calling sftp_stat(\".\", NULL)");
+      }
+# else
+         trace_log(__FILE__, __LINE__, C_TRACE, NULL, 0,
+                   "sftp_noop(): Handled via ServerAliveInterval");
+# endif
    }
 #endif
 
@@ -4443,10 +4524,15 @@ sftp_noop(void)
       return(INCORRECT);
    }
 
-   /* I do not know of a better way. SFTP does not support */
-   /* a NOOP command, so lets just do a stat() on the      */
-   /* current working directory.                           */
-   return(sftp_stat(".", NULL));
+#ifdef FORCE_SFTP_NOOP
+   /* I do not know of a better way. SFTP does not support  */
+   /* a NOOP command, so lets just do a stat() on the       */
+   /* current working directory, but if the server supports */
+   /* limits, just query the limit.                         */
+   return((scd.limits == 1) ? get_limits(NO) : sftp_stat(".", NULL));
+#else
+   return(SUCCESS);
+#endif
 }
 
 
@@ -4477,6 +4563,11 @@ sftp_quit(void)
        (scd.dir_handle != NULL) && (scd.pipe_broken == NO))
    {
       (void)sftp_close_dir();
+   }
+   if (scd.dir_handle != NULL)
+   {
+      free(scd.dir_handle);
+      scd.dir_handle = NULL;
    }
    if (scd.stored_replies > 0)
    {
@@ -4605,6 +4696,62 @@ sftp_quit(void)
 }
 
 
+/*++++++++++++++++++++++++++ sftp_create_dir() ++++++++++++++++++++++++++*/
+int
+sftp_create_dir(char *dirname, mode_t dir_mode, char *created_path)
+{
+   int  status = SUCCESS;
+   char *p_start,
+        *ptr,
+        tmp_char;
+
+   ptr = dirname;
+   do
+   {
+      while (*ptr == '/')
+      {
+         ptr++;
+      }
+      p_start = ptr;
+      while ((*ptr != '/') && (*ptr != '\0'))
+      {
+         ptr++;
+      }
+      if ((*ptr == '/') || (*ptr == '\0'))
+      {
+         tmp_char = *ptr;
+         *ptr = '\0';
+         if (((status = sftp_stat(dirname, NULL)) != SUCCESS) &&
+             (timeout_flag == OFF))
+         {
+            status = sftp_mkdir(dirname, dir_mode);
+            if (status == SUCCESS)
+            {
+               if (created_path != NULL)
+               {
+                   if (created_path[0] != '\0')
+                   {
+                      (void)strcat(created_path, "/");
+                   }
+                   (void)strcat(created_path, p_start);
+               }
+            }
+         }
+         else if (scd.version > 3)
+              {
+                 if (scd.stat_buf.st_mode != S_IFDIR)
+                 {
+                    status = INCORRECT;
+                 }
+              }
+         *ptr = tmp_char;
+      }
+   } while ((*ptr != '\0') && (status == SUCCESS));
+
+   return(status);
+}
+
+
 /*++++++++++++++++++++++++++++ get_reply() ++++++++++++++++++++++++++++++*/
 static int
 get_reply(unsigned int id, unsigned int *ret_msg_length, int line)
@@ -4693,6 +4840,28 @@ retry:
    if ((reply = read_msg(msg, 4, line)) == SUCCESS)
    {
       *p_msg_length = get_xfer_uint(msg);
+
+      /*
+       * For sftp_readdir() it can be that the reply is
+       * larger then our current buffer. Check if we can just
+       * increase the buffer. But do not go beyond MAX_SFTP_BLOCKSIZE.
+       * It can be that we are out of sync and are reading garbage.
+       */
+      if ((*p_msg_length > scd.max_sftp_msg_length) &&
+          (*p_msg_length <= MAX_SFTP_BLOCKSIZE))
+      {
+         if (*p_msg_length <= MAX_SFTP_BLOCKSIZE)
+         {
+            if ((msg = realloc(msg, *p_msg_length)) == NULL)
+            {
+                trans_log(ERROR_SIGN, __FILE__, __LINE__, "get_reply", NULL,
+                          _("realloc() error : %s"), strerror(errno));
+                return(INCORRECT);
+            }
+            scd.max_sftp_msg_length = *p_msg_length;
+         }
+      }
+
       if (*p_msg_length <= scd.max_sftp_msg_length)
       {
          if ((reply = read_msg(msg, (int)*p_msg_length, line)) == SUCCESS)
@@ -5182,7 +5351,7 @@ read_msg(char *block, int blocksize, int line)
                  trans_log(ERROR_SIGN, __FILE__, __LINE__, "read_msg", NULL,
                            _("Pipe has been closed! [%d]"), line);
                  (void)strcpy(msg_str, "Connection closed");
-                 timeout_flag = NEITHER;
+                 timeout_flag = PIPE_CLOSED;
                  return(INCORRECT);
               }
               else
@@ -5285,7 +5454,7 @@ show_sftp_cmd(unsigned int ui_var, int type, int mode)
          {
             int  str_len;
             char *ptr,
-                 *p_xfer_str;
+                 *p_xfer_str = NULL;
 
             length += snprintf(buffer + length, 4096 - length, " extensions=");
             ui_var -= 5;
@@ -5361,7 +5530,7 @@ show_sftp_cmd(unsigned int ui_var, int type, int mode)
                                              {
                                                 int  ptr_offset = 4 + 4 + 4 + 4 + 4 + 2 + 2 + 4,
                                                      supported2_length_offset = 4 + 4 + 4 + 4 + 4 + 2 + 2 + 4 + 4;
-                                                char *p_extension;
+                                                char *p_extension = NULL;
 
                                                 if ((extension_count > 0) &&
                                                     ((length + S2_ATTRIB_EXTENSION_NAME_LENGTH + 1) < 4096))
@@ -6062,11 +6231,11 @@ show_trace_handle(char         *function,
               if (((unsigned char)handle[i] < 32) ||
                   ((unsigned char)handle[i] > 126))
               {
-                 msg_str[i] = '.';
+                 msg_str[length + i] = '.';
               }
               else
               {
-                 msg_str[i] = handle[i];
+                 msg_str[length + i] = handle[i];
               }
            }
            length = length + i;

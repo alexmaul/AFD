@@ -1,6 +1,6 @@
 /*
  *  fddefs.h - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 1995 - 2023 Holger Kiehl <Holger.Kiehl@dwd.de>
+ *  Copyright (c) 1995 - 2025 Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -194,6 +194,10 @@
 #define NO_MESSAGE_FILE          41     /* The message file does not     */
                                         /* exist.                        */
 #define NO_MESSAGE_FILE_STR      "The message file does not exist"
+#define STAT_REMOTE_ERROR        42     /* Used by sf_sftp().            */
+#define STAT_REMOTE_ERROR_STR    "Failed to stat() remote file/dir"
+#define PIPE_CLOSED_ERROR        43     /* Used by sf_sftp() + gf_sftp() */
+#define PIPE_CLOSED_ERROR_STR    "Pipe closed"
 #define REMOTE_USER_ERROR        50     /* Failed to send mail address.  */
 #define REMOTE_USER_ERROR_STR    "Failed to send mail address"
 #define DATA_ERROR               51     /* Failed to send data command.  */
@@ -319,9 +323,10 @@
 #define HIDE_ALL_GROUP_MEMBERS         33554432
 #define PATH_MAY_CHANGE                67108864
 #ifdef _WITH_TRANS_EXEC
-# define EXECUTE_IN_TARGET_DIR         134217728
+# define EXECUTE_IN_TARGET_DIR         134217728  /* 28 */
 #endif
-#define SILENT_NOT_LOCKED_FILE         268435456
+#define SILENT_NOT_LOCKED_FILE         268435456  /* 29 */
+#define SEND_ZERO_SIZE                 536870912  /* 30 */
 
 #ifdef _WITH_DE_MAIL_SUPPORT
 /* Definition for de_mail_options in structure job. */
@@ -461,6 +466,8 @@ struct job
           char           timezone[MAX_TIMEZONE_LENGTH + 1];
           char           te_malloc;      /* Flag to show if te pointer   */
                                          /* was malloced.                */
+          char           name2dir_char;  /* Separator character for      */
+                                         /* renaming file to directory.  */
           char           *group_mail_domain;
           char           *index_file;    /* HTTP directory listing.      */
           int            no_of_restart_files;
@@ -676,6 +683,7 @@ struct job
                                          /*|27 | Target dir can change. |*/
                                          /*|28 | Execute in target dir. |*/
                                          /*|29 | Silent not locked file.|*/
+                                         /*|30 | Send zero size.        |*/
                                          /*+---+------------------------+*/
 #ifdef _WITH_DE_MAIL_SUPPORT
           char           *message_id;
@@ -978,6 +986,7 @@ extern void  calc_trl_per_process(int),
                            unsigned short **, unsigned int **, char **,
                            char **, char **),
              init_trl_data(void),
+             name2dir(char, char *, char *, int),
              limit_transfer_rate(int, off_t, clock_t),
              log_append(struct job *, char *, char *),
              receive_log(char *, char *, int, time_t, unsigned int, char *, ...),

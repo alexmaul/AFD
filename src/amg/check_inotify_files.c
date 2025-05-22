@@ -1,6 +1,6 @@
 /*
  *  check_inotify_files.c - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 2013 - 2023 Holger Kiehl <Holger.Kiehl@dwd.de>
+ *  Copyright (c) 2013 - 2025 Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -43,6 +43,11 @@ DESCR__S_M1
  **   16.06.2023 H.Kiehl Do not delete UNKNOWN_FILES inotify files
  **                      immediately by default. del_unknown_inotify_files()
  **                      will remove those files.
+ **   13.02.2025 H.Kiehl If host is disabled, we must do a pattern match
+ **                      because if the locking procedure is not dot
+ **                      we will delete files to early.
+ **   14.02.2025 H.Kiehl Improve above fix by just searching for not (!)
+ **                      sign. All other patterns should match.
  **
  */
 DESCR__E_M1
@@ -56,6 +61,9 @@ DESCR__E_M1
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/time.h>              /* struct timeval                     */
+#if defined (LINUX) && defined (DIR_CHECK_CAP_CHOWN)
+# include <sys/capability.h>
+#endif
 #ifdef HAVE_MMAP
 # include <sys/mman.h>             /* munmap()                           */
 #endif
@@ -106,6 +114,11 @@ extern char                       **file_name_pool;
 extern unsigned char              *file_length_pool;
 #endif
 extern char                       *afd_file_dir;
+#if defined (LINUX) && defined (DIR_CHECK_CAP_CHOWN)
+extern cap_t                      caps;
+extern int                        can_do_chown,
+                                  hardlinks_protected_set;
+#endif
 #ifdef MULTI_FS_SUPPORT
 extern struct extra_work_dirs     *ewl;
 #endif
@@ -256,69 +269,117 @@ check_inotify_files(struct inotify_watch_list *p_iwl,
                   if ((fra[p_de->fra_pos].remove == YES) ||
                       (fra[p_de->fra_pos].fsa_pos != -1))
                   {
-                     if (unlink(fullname) == -1)
+                     int gotcha;
+
+                     if (p_de->flag & ALL_FILES)
                      {
-                        if (errno != ENOENT)
-                        {
-                           system_log(ERROR_SIGN, __FILE__, __LINE__,
-                                      _("Failed to unlink() file `%s' : %s"),
-                                      fullname, strerror(errno));
-                        }
+                        gotcha = YES;
                      }
                      else
                      {
+                        int j, k;
+
+                        gotcha = NO;
+                        for (j = 0; j < p_de->nfg; j++)
+                        {
+                           for (k = 0; ((j < p_de->nfg) &&
+                                        (k < p_de->fme[j].nfm)); k++)
+                           {
+                              if ((p_de->fme[j].file_mask[k][0] != '!') ||
+                                  ((ret = pmatch(p_de->fme[j].file_mask[k],
+                                                 &p_iwl->file_name[current_fnl_pos],
+                                                 &current_time)) == 0))
+                              {
+                                 /*
+                                  * This file is wanted, for this file
+                                  * group! However, the next file group
+                                  * might state that it does want this file.
+                                  * So only ignore all entries for this
+                                  * file group!
+                                  */
+                                 gotcha = YES;
+                                 break;
+                              }
+                              else if (ret == 1)
+                                   {
+                                      /*
+                                       * This file is definitely NOT wanted.
+                                       * So it can be a temp file name
+                                       * used for locking.
+                                       */
+                                      gotcha = NO;
+                                      j = p_de->nfg;
+                                   }
+                           }
+                        } /* for (j = 0; j < p_de->nfg; j++) */
+                     }
+
+                     if (gotcha == YES)
+                     {
+                        if (unlink(fullname) == -1)
+                        {
+                           if (errno != ENOENT)
+                           {
+                              system_log(ERROR_SIGN, __FILE__, __LINE__,
+                                         _("Failed to unlink() file `%s' : %s"),
+                                         fullname, strerror(errno));
+                           }
+                        }
+                        else
+                        {
 #ifdef _DELETE_LOG
-                        size_t        dl_real_size;
+                           size_t        dl_real_size;
 #endif
 #ifdef _DISTRIBUTION_LOG
-                        unsigned int  dummy_job_id = 0,
-                                      *p_dummy_job_id;
-                        unsigned char dummy_proc_cycles = 0;
+                           unsigned int  dummy_job_id = 0,
+                                         *p_dummy_job_id;
+                           unsigned char dummy_proc_cycles = 0;
 
-                        p_dummy_job_id = &dummy_job_id;
-                        dis_log(DISABLED_DIS_TYPE, current_time,
-                                p_de->dir_id, 0,
-                                &p_iwl->file_name[current_fnl_pos],
+                           p_dummy_job_id = &dummy_job_id;
+                           dis_log(DISABLED_DIS_TYPE, current_time,
+                                   p_de->dir_id, 0,
+                                   &p_iwl->file_name[current_fnl_pos],
 # ifdef HAVE_STATX
-                                p_iwl->fnl[i], stat_buf.stx_size, 1,
+                                   p_iwl->fnl[i], stat_buf.stx_size, 1,
 # else
-                                p_iwl->fnl[i], stat_buf.st_size, 1,
+                                   p_iwl->fnl[i], stat_buf.st_size, 1,
 # endif
-                                &p_dummy_job_id, &dummy_proc_cycles, 1);
+                                   &p_dummy_job_id, &dummy_proc_cycles, 1);
 #endif
 #ifdef _DELETE_LOG
-                        (void)my_strncpy(dl.file_name,
-                                         &p_iwl->file_name[current_fnl_pos],
-                                         p_iwl->fnl[i] + 1);
-                        (void)snprintf(dl.host_name,
-                                       MAX_HOSTNAME_LENGTH + 4 + 1,
-                                       "%-*s %03x",
-                                       MAX_HOSTNAME_LENGTH, "-",
-                                       DELETE_HOST_DISABLED);
+                           (void)my_strncpy(dl.file_name,
+                                            &p_iwl->file_name[current_fnl_pos],
+                                            p_iwl->fnl[i] + 1);
+                           (void)snprintf(dl.host_name,
+                                          MAX_HOSTNAME_LENGTH + 4 + 1,
+                                          "%-*s %03x",
+                                          MAX_HOSTNAME_LENGTH, "-",
+                                          DELETE_HOST_DISABLED);
 # ifdef HAVE_STATX
-                        *dl.file_size = stat_buf.stx_size;
+                           *dl.file_size = stat_buf.stx_size;
 # else
-                        *dl.file_size = stat_buf.st_size;
+                           *dl.file_size = stat_buf.st_size;
 # endif
-                        *dl.dir_id = p_de->dir_id;
-                        *dl.job_id = 0;
-                        *dl.input_time = current_time;
-                        *dl.split_job_counter = 0;
-                        *dl.unique_number = 0;
-                        *dl.file_name_length = p_iwl->fnl[i];
-                        dl_real_size = *dl.file_name_length + dl.size +
-                                       snprintf((dl.file_name + *dl.file_name_length + 1),
-                                                MAX_FILENAME_LENGTH + 1,
-                                                "%s%c(%s %d)",
-                                                DIR_CHECK, SEPARATOR_CHAR,
-                                                __FILE__, __LINE__);
-                        if (write(dl.fd, dl.data, dl_real_size) != dl_real_size)
-                        {
-                           system_log(ERROR_SIGN, __FILE__, __LINE__,
-                                      _("write() error : %s"),
-                                      strerror(errno));
-                        }
+                           *dl.dir_id = p_de->dir_id;
+                           *dl.job_id = 0;
+                           *dl.input_time = current_time;
+                           *dl.split_job_counter = 0;
+                           *dl.unique_number = 0;
+                           *dl.file_name_length = p_iwl->fnl[i];
+                           dl_real_size = *dl.file_name_length + dl.size +
+                                          snprintf((dl.file_name + *dl.file_name_length + 1),
+                                                   MAX_FILENAME_LENGTH + 1,
+                                                   "%s%c(%s %d)",
+                                                   DIR_CHECK, SEPARATOR_CHAR,
+                                                   __FILE__, __LINE__);
+                           if (write(dl.fd, dl.data, dl_real_size) != dl_real_size)
+                           {
+                              system_log(ERROR_SIGN, __FILE__, __LINE__,
+                                         _("write() error : %s"),
+                                         strerror(errno));
+                           }
 #endif
+                        }
                      }
                   }
                }
@@ -337,7 +398,8 @@ check_inotify_files(struct inotify_watch_list *p_iwl,
                      gotcha = NO;
                      for (j = 0; j < p_de->nfg; j++)
                      {
-                        for (k = 0; ((j < p_de->nfg) && (k < p_de->fme[j].nfm)); k++)
+                        for (k = 0; ((j < p_de->nfg) &&
+                                     (k < p_de->fme[j].nfm)); k++)
                         {
                            if ((ret = pmatch(p_de->fme[j].file_mask[k],
                                              &p_iwl->file_name[current_fnl_pos],
@@ -349,14 +411,15 @@ check_inotify_files(struct inotify_watch_list *p_iwl,
                            else if (ret == 1)
                                 {
                                    /*
-                                    * This file is definitely NOT wanted, for this
-                                    * file group! However, the next file group
-                                    * might state that it does want this file. So
-                                    * only ignore all entries for this file group!
+                                    * This file is definitely NOT wanted,
+                                    * for this * file group! However, the
+                                    * next file group might state that it
+                                    * does want this file. So only ignore
+                                    * all entries for this file group!
                                     */
                                    break;
                                 }
-                        } /* for (k = 0; ((j < p_de->nfg) && (k < p_de->fme[j].nfm)); k++) */
+                        }
                      } /* for (j = 0; j < p_de->nfg; j++) */
                   }
 
@@ -532,6 +595,57 @@ check_inotify_files(struct inotify_watch_list *p_iwl,
                                  else
                                  {
                                     what_done = DATA_MOVED;
+#if defined (LINUX) && defined (DIR_CHECK_CAP_CHOWN)
+                                    if ((hardlinks_protected_set == YES) &&
+                                        ((can_do_chown == YES) ||
+                                         (can_do_chown == NEITHER)) &&
+# ifdef HAVE_STATX
+                                        (stat_buf.stx_uid != afd_uid)
+# else
+                                        (stat_buf.st_uid != afd_uid)
+# endif
+                                       )
+                                    {
+                                       if (can_do_chown == NEITHER)
+                                       {
+                                          cap_value_t cap_value[1];
+
+                                          cap_value[0] = CAP_CHOWN;
+                                          cap_set_flag(caps, CAP_EFFECTIVE, 1,
+                                                       cap_value, CAP_SET);
+                                          if (cap_set_proc(caps) == -1)
+                                          {
+                                             receive_log(WARN_SIGN, __FILE__,
+                                                         __LINE__, current_time,
+                                                         "cap_set_proc() error : %s",
+                                                         strerror(errno));
+                                             can_do_chown = PERMANENT_INCORRECT;
+                                          }
+                                          else
+                                          {
+                                             can_do_chown = YES;
+                                          }
+                                       }
+                                       if (can_do_chown == YES)
+                                       {
+                                          if (chown(tmp_file_dir, afd_uid, -1) == -1)
+                                          {
+                                             receive_log(WARN_SIGN, __FILE__,
+                                                         __LINE__, current_time,
+                                                         "chown() error : %s",
+                                                         strerror(errno));
+                                          }
+                                       }
+                                       else
+                                       {
+                                          receive_log(WARN_SIGN, __FILE__,
+                                                      __LINE__, current_time,
+                                                      "chown of %s is not possible (can_do_chown=%d)",
+                                                      tmp_file_dir,
+                                                      can_do_chown);
+                                       }
+                                    }
+#endif
                                  }
                               }
                               else
@@ -582,7 +696,8 @@ check_inotify_files(struct inotify_watch_list *p_iwl,
                                  if ((access(fullname, F_OK) == -1) &&
                                      (errno == ENOENT))
                                  {
-                                    (void)strcpy(reason_str, "(source missing) ");
+                                    (void)strcpy(reason_str,
+                                                 "(source missing) ");
 
                                     /*
                                      * With inotify it can happen that when
@@ -614,7 +729,8 @@ check_inotify_files(struct inotify_watch_list *p_iwl,
                                  reason_str[0] = '\0';
                                  sign = ERROR_SIGN;
                               }
-                              receive_log(sign, __FILE__, __LINE__, current_time,
+                              receive_log(sign, __FILE__, __LINE__,
+                                          current_time,
                                           _("Failed (%d) to %s file `%s' to `%s' %s: %s @%x"),
                                           ret,
                                           (what_done == DATA_MOVED) ? "move" : "copy",
@@ -879,7 +995,8 @@ check_inotify_files(struct inotify_watch_list *p_iwl,
                            {
                               receive_log(WARN_SIGN, NULL, 0, current_time,
                                           _("File %s is duplicate. @%x"),
-                                          &p_iwl->file_name[current_fnl_pos], p_de->dir_id);
+                                          &p_iwl->file_name[current_fnl_pos],
+                                          p_de->dir_id);
                            }
                         }
                      }
@@ -973,6 +1090,27 @@ check_inotify_files(struct inotify_watch_list *p_iwl,
    p_iwl->no_of_files = 0;
    p_iwl->cur_fn_length = 0;
    p_iwl->alloc_fn_length = 0;
+
+#if defined (LINUX) && defined (DIR_CHECK_CAP_CHOWN)
+   /* Give up chown capability. */
+   if (can_do_chown == YES)
+   {
+      cap_value_t cap_value[1];
+
+      cap_value[0] = CAP_CHOWN;
+      cap_set_flag(caps, CAP_EFFECTIVE, 1, cap_value, CAP_CLEAR);
+      if (cap_set_proc(caps) == -1)
+      {
+         receive_log(WARN_SIGN, __FILE__, __LINE__, current_time,
+                     "cap_set_proc() error : %s", strerror(errno));
+         can_do_chown = NO;
+      }
+      else
+      {
+         can_do_chown = NEITHER;
+      }
+   }
+#endif
 
    /* So that we return only the directory name where */
    /* the files have been stored.                    */

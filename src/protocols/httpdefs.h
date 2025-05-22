@@ -1,6 +1,6 @@
 /*
  *  httpdefs.h - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 2003 - 2023 Holger Kiehl <Holger.Kiehl@dwd.de>
+ *  Copyright (c) 2003 - 2024 Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -78,14 +78,12 @@ struct http_message_reply
           char          http_proxy[MAX_REAL_HOSTNAME_LENGTH + 1];
           char          user[MAX_USER_NAME_LENGTH + 1];
           char          passwd[MAX_USER_NAME_LENGTH + 1];
-#ifdef WITH_SSL
           char          region[MAX_REAL_HOSTNAME_LENGTH + 1];
           char          marker[MAX_FILENAME_LENGTH + 1];
           char          service[3];
           char          tls_auth;
           unsigned char service_type;
           unsigned char listobject_version;
-#endif
 #ifdef _WITH_EXTRA_CHECK
           char          http_etag[MAX_EXTRA_LS_DATA_LENGTH + 1];
 #endif
@@ -121,6 +119,282 @@ struct http_message_reply
 #endif
        };
 
+/* Macros for HTML. */
+#define STORE_HTML_STRING(html_str, str_len, max_str_length, end_char)\
+        {\
+           str_len = 0;\
+           while ((str_len < ((max_str_length) - 1)) && (*ptr != end_char) &&\
+                  (*ptr != '\n') && (*ptr != '\r') && (*ptr != '\0'))\
+           {\
+              if (*ptr == '&')\
+              {\
+                 ptr++;\
+                 if ((*(ptr + 1) == 'u') && (*(ptr + 2) == 'm') &&\
+                     (*(ptr + 3) == 'l') && (*(ptr + 4) == ';'))\
+                 {\
+                    switch (*ptr)\
+                    {\
+                       case 'a': (html_str)[str_len++] = 228;\
+                                 break;\
+                       case 'A': (html_str)[str_len++] = 196;\
+                                 break;\
+                       case 'e': (html_str)[str_len++] = 235;\
+                                 break;\
+                       case 'E': (html_str)[str_len++] = 203;\
+                                 break;\
+                       case 'i': (html_str)[str_len++] = 239;\
+                                 break;\
+                       case 'I': (html_str)[str_len++] = 207;\
+                                 break;\
+                       case 'o': (html_str)[str_len++] = 246;\
+                                 break;\
+                       case 'O': (html_str)[str_len++] = 214;\
+                                 break;\
+                       case 'u': (html_str)[str_len++] = 252;\
+                                 break;\
+                       case 'U': (html_str)[str_len++] = 220;\
+                                 break;\
+                       case 's': (html_str)[str_len++] = 223;\
+                                 break;\
+                       case 'y': (html_str)[str_len++] = 255;\
+                                 break;\
+                       case 'Y': (html_str)[str_len++] = 195;\
+                                 break;\
+                       default : /* Just ignore it. */\
+                                 break;\
+                    }\
+                    ptr += 5;\
+                    continue;\
+                 }\
+                 else if ((*(ptr + 1) == 'g') && (*(ptr + 2) == 'r') &&\
+                          (*(ptr + 3) == 'a') && (*(ptr + 4) == 'v') &&\
+                          (*(ptr + 5) == 'e') && (*(ptr + 6) == ';'))\
+                      {\
+                         switch (*ptr)\
+                         {\
+                            case 'a': (html_str)[str_len++] = 224;\
+                                      break;\
+                            case 'A': (html_str)[str_len++] = 192;\
+                                      break;\
+                            case 'e': (html_str)[str_len++] = 232;\
+                                      break;\
+                            case 'E': (html_str)[str_len++] = 200;\
+                                      break;\
+                            case 'o': (html_str)[str_len++] = 242;\
+                                      break;\
+                            case 'O': (html_str)[str_len++] = 210;\
+                                      break;\
+                            default : /* Just ignore it. */\
+                                      break;\
+                         }\
+                         ptr += 7;\
+                         continue;\
+                      }\
+                 else if ((*(ptr + 1) == 'a') && (*(ptr + 2) == 'c') &&\
+                          (*(ptr + 3) == 'u') && (*(ptr + 4) == 't') &&\
+                          (*(ptr + 5) == 'e') && (*(ptr + 6) == ';'))\
+                      {\
+                         switch (*ptr)\
+                         {\
+                            case 'a': (html_str)[str_len++] = 225;\
+                                      break;\
+                            case 'A': (html_str)[str_len++] = 193;\
+                                      break;\
+                            case 'e': (html_str)[str_len++] = 233;\
+                                      break;\
+                            case 'E': (html_str)[str_len++] = 201;\
+                                      break;\
+                            case 'o': (html_str)[str_len++] = 243;\
+                                      break;\
+                            case 'O': (html_str)[str_len++] = 211;\
+                                      break;\
+                            default : /* Just ignore it. */\
+                                      break;\
+                         }\
+                         ptr += 7;\
+                         continue;\
+                      }\
+                 else if ((*(ptr + 1) == 'c') && (*(ptr + 2) == 'i') &&\
+                          (*(ptr + 3) == 'r') && (*(ptr + 4) == 'c') &&\
+                          (*(ptr + 5) == ';'))\
+                      {\
+                         switch (*ptr)\
+                         {\
+                            case 'a': (html_str)[str_len++] = 226;\
+                                      break;\
+                            case 'A': (html_str)[str_len++] = 194;\
+                                      break;\
+                            case 'e': (html_str)[str_len++] = 234;\
+                                      break;\
+                            case 'E': (html_str)[str_len++] = 202;\
+                                      break;\
+                            case 'o': (html_str)[str_len++] = 244;\
+                                      break;\
+                            case 'O': (html_str)[str_len++] = 212;\
+                                      break;\
+                            default : /* Just ignore it. */\
+                                      break;\
+                         }\
+                         ptr += 6;\
+                         continue;\
+                      }\
+                 else if ((*(ptr + 1) == 'c') && (*(ptr + 2) == 'e') &&\
+                          (*(ptr + 3) == 'd') && (*(ptr + 4) == 'i') &&\
+                          (*(ptr + 5) == 'l') && (*(ptr + 6) == ';'))\
+                      {\
+                         switch (*ptr)\
+                         {\
+                            case 'c': (html_str)[str_len++] = 231;\
+                                      break;\
+                            case 'C': (html_str)[str_len++] = 199;\
+                                      break;\
+                            default : /* Just ignore it. */\
+                                      break;\
+                         }\
+                         ptr += 7;\
+                         continue;\
+                      }\
+                 else if ((*(ptr + 1) == 't') && (*(ptr + 2) == 'i') &&\
+                          (*(ptr + 3) == 'l') && (*(ptr + 4) == 'd') &&\
+                          (*(ptr + 5) == 'e') && (*(ptr + 6) == ';'))\
+                      {\
+                         switch (*ptr)\
+                         {\
+                            case 'n': (html_str)[str_len++] = 241;\
+                                      break;\
+                            case 'N': (html_str)[str_len++] = 209;\
+                                      break;\
+                            case 'o': (html_str)[str_len++] = 245;\
+                                      break;\
+                            default : /* Just ignore it. */\
+                                      break;\
+                         }\
+                         ptr += 7;\
+                         continue;\
+                      }\
+                 else if ((*ptr == 's') && (*(ptr + 1) == 'z') &&\
+                          (*(ptr + 2) == 'l') && (*(ptr + 3) == 'i') &&\
+                          (*(ptr + 4) == 'g') && (*(ptr + 5) == ';'))\
+                      {\
+                         (html_str)[str_len++] = 223;\
+                         ptr += 6;\
+                         continue;\
+                      }\
+                 else if ((*ptr == 'a') && (*(ptr + 1) == 'm') &&\
+                          (*(ptr + 2) == 'p') && (*(ptr + 3) == ';'))\
+                      {\
+                         (html_str)[str_len++] = 38;\
+                         ptr += 4;\
+                         continue;\
+                      }\
+                 else if ((*ptr == 'd') && (*(ptr + 1) == 'e') &&\
+                          (*(ptr + 2) == 'g') && (*(ptr + 3) == ';'))\
+                      {\
+                         (html_str)[str_len++] = 176;\
+                         ptr += 4;\
+                         continue;\
+                      }\
+                 else if ((*ptr == 'g') && (*(ptr + 1) == 't') &&\
+                          (*(ptr + 2) == ';'))\
+                      {\
+                         (html_str)[str_len++] = '>';\
+                         ptr += 3;\
+                         continue;\
+                      }\
+                 else if ((*ptr == 'l') && (*(ptr + 1) == 't') &&\
+                          (*(ptr + 2) == ';'))\
+                      {\
+                         (html_str)[str_len++] = '<';\
+                         ptr += 3;\
+                         continue;\
+                      }\
+                      else\
+                      {\
+                         while ((*ptr != ';') && (*ptr != '<') &&\
+                                (*ptr != '\n') && (*ptr != '\r') &&\
+                                (*ptr != '\0'))\
+                         {\
+                            ptr++;\
+                         }\
+                         if (*ptr != ';')\
+                         {\
+                            break;\
+                         }\
+                      }\
+              }\
+              (html_str)[str_len] = *ptr;\
+              str_len++; ptr++;\
+           }\
+           (html_str)[str_len] = '\0';\
+        }
+#define STORE_HTML_DATE()\
+        {\
+           int i = 0,\
+               space_counter = 0;\
+\
+           while ((i < (MAX_FILENAME_LENGTH - 1)) && (*ptr != '<') &&\
+                  (*ptr != '\n') && (*ptr != '\r') && (*ptr != '\0'))\
+           {\
+              if (*ptr == ' ')\
+              {\
+                 if (space_counter == 1)\
+                 {\
+                    while (*ptr == ' ')\
+                    {\
+                       ptr++;\
+                    }\
+                    break;\
+                 }\
+                 space_counter++;\
+              }\
+              if (*ptr == '&')\
+              {\
+                 ptr++;\
+                 if ((*(ptr + 1) == 'u') && (*(ptr + 2) == 'm') &&\
+                     (*(ptr + 3) == 'l') && (*(ptr + 4) == ';'))\
+                 {\
+                    switch (*ptr)\
+                    {\
+                       case 'a': date_str[i++] = 228;\
+                                 break;\
+                       case 'A': date_str[i++] = 196;\
+                                 break;\
+                       case 'o': date_str[i++] = 246;\
+                                 break;\
+                       case 'O': date_str[i++] = 214;\
+                                 break;\
+                       case 'u': date_str[i++] = 252;\
+                                 break;\
+                       case 'U': date_str[i++] = 220;\
+                                 break;\
+                       case 's': date_str[i++] = 223;\
+                                 break;\
+                       default : /* Just ignore it. */\
+                                 break;\
+                    }\
+                    ptr += 5;\
+                    continue;\
+                 }\
+                 else\
+                 {\
+                    while ((*ptr != ';') && (*ptr != '<') &&\
+                           (*ptr != '\n') && (*ptr != '\r') &&\
+                           (*ptr != '\0'))\
+                    {\
+                       ptr++;\
+                    }\
+                    if (*ptr != ';')\
+                    {\
+                       break;\
+                    }\
+                 }\
+              }\
+              date_str[i] = *ptr;\
+              i++; ptr++;\
+           }\
+           date_str[i] = '\0';\
+        }
+
 /* Function prototypes. */
 #ifdef WITH_SSL
 extern int  aws_cmd(char *, char *, char *, char *, struct http_message_reply *),
@@ -135,7 +409,7 @@ extern int  basic_authentication(struct http_message_reply *),
 #ifdef WITH_SSL
                          unsigned char, unsigned char, char *, char,
 #endif
-                         int, int, char),
+                         int, int, char, int),
             http_del(char *, char *),
 #ifdef _WITH_EXTRA_CHECK
             http_get(char *, char *, char *, char *, off_t *, off_t),

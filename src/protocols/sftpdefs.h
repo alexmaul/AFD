@@ -1,6 +1,6 @@
 /*
  *  sftpdefs.h - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 2005 - 2023 Holger Kiehl <Holger.Kiehl@dwd.de>
+ *  Copyright (c) 2005 - 2025 Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -334,7 +334,11 @@ extern int          sftp_cd(char *, int, mode_t, char *),
                     sftp_chmod(char *, mode_t),
                     sftp_close_dir(void),
                     sftp_close_file(void),
-                    sftp_connect(char *, int, unsigned char, int, char *,
+                    sftp_connect(char *, int, unsigned char, int,
+#ifndef FORCE_SFTP_NOOP
+                                 int,
+#endif
+                                 char *,
 #ifdef WITH_SSH_FINGERPRINT
                                  char *, char *, char),
 #else
@@ -353,7 +357,8 @@ extern int          sftp_cd(char *, int, mode_t, char *),
                     sftp_multi_read_init(int, off_t),
                     sftp_noop(void),
                     sftp_open_dir(char *),
-                    sftp_open_file(int, char *, off_t, mode_t *, int, int *),
+                    sftp_open_file(int, char *, off_t, mode_t *, int,
+                                   mode_t, char *, int, int *),
                     sftp_pwd(void),
                     sftp_read(char *, int),
                     sftp_readdir(char *, struct stat *),

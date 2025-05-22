@@ -1,6 +1,6 @@
 /*
  *  amgdefs.h - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 1996 - 2023 Holger Kiehl <Holger.Kiehl@dwd.de>
+ *  Copyright (c) 1996 - 2025 Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -33,17 +33,20 @@
 /* #define SHOW_FILE_MOVING */
 
 /* Definitions to be read from the AFD_CONFIG file. */
-#define AMG_DIR_RESCAN_TIME_DEF    "AMG_DIR_RESCAN_TIME"
-#define MAX_NO_OF_DIR_CHECKS_DEF   "MAX_NO_OF_DIR_CHECKS"
-#define MAX_PROCESS_PER_DIR_DEF    "MAX_PROCESS_PER_DIR"
-#define IGNORE_FIRST_ERRORS_DEF    "IGNORE_FIRST_ERRORS"
+#define AMG_DIR_RESCAN_TIME_DEF            "AMG_DIR_RESCAN_TIME"
+#define MAX_NO_OF_DIR_CHECKS_DEF           "MAX_NO_OF_DIR_CHECKS"
+#define MAX_PROCESS_PER_DIR_DEF            "MAX_PROCESS_PER_DIR"
+#define IGNORE_FIRST_ERRORS_DEF            "IGNORE_FIRST_ERRORS"
+#if defined (LINUX) && defined (DIR_CHECK_CAP_CHOWN)
+# define FORCE_SET_HARDLINKS_PROTECTED_DEF "FORCE_SET_HARDLINKS_PROTECTED"
+#endif
 
 /* Definitions of default values. */
 #define DEFAULT_PRIORITY           '9'  /* When priority is not          */
                                         /* specified, assume this value. */
 
 /* Definitions of maximum values. */
-#define MAX_CHECK_FILE_DIRS        152  /* AMG should only check the file*/
+#define MAX_CHECK_FILE_DIRS       2050  /* AMG should only check the file*/
                                         /* directory if it is less then  */
                                         /* this value. Don't forget to   */
                                         /* add 2 for "." and "..".       */
@@ -189,6 +192,9 @@
 
 #define LOCALE_DIR  0
 #define REMOTE_DIR  1
+
+#define FORCE_HREF  2                    /* For get_dir_list in struct   */
+                                         /* dir_data.                    */
 
 /* Definitions for assembling, converting and extracting WMO bulletins/files. */
 #define TWO_BYTE                   1
@@ -460,14 +466,17 @@ struct dir_data
                                             /* files starting with a     */
                                             /* leading dot. Default is   */
                                             /* NO.                       */
-          unsigned char do_not_get_dir_list;/* The directory should not  */
-                                            /* be scanned, instead look  */
-                                            /* for the exact files from  */
+          unsigned char get_dir_list;       /* If this is NO the         */
+                                            /* directory should not be   */
+                                            /* scanned, instead look for */
+                                            /* the exact files from      */
                                             /* [files] entry. This is    */
                                             /* currently only useful for */
                                             /* HTTP, where directory     */
                                             /* listing is not supported  */
-                                            /* or wanted.                */
+                                            /* or wanted. If set to      */
+                                            /* FORCE_HREF, scan for all  */
+                                            /* HTTP href statements.     */
           unsigned char url_creates_file_name;/* The given URL creates   */
                                             /* the file name when the    */
                                             /* request is issued. This   */
@@ -492,6 +501,9 @@ struct dir_data
           unsigned char one_process_just_scaning; /* One process just for*/
                                             /* getting the directory     */
                                             /* listing.                  */
+          unsigned char dir_zero_size;      /* When retrieving files do  */
+                                            /* get the content of the    */
+                                            /* file.                     */
           mode_t        dir_mode;           /* The permissions which a   */
                                             /* newly created source      */
                                             /* directory should have.    */
@@ -863,6 +875,9 @@ extern int    amg_zombie_check(pid_t *, int),
               com(char, char *, int),
               convert(char *, char *, int, int, unsigned int, unsigned int,
                       off_t *),
+#if defined (LINUX) && defined (DIR_CHECK_CAP_CHOWN)
+              check_hardlinks_protected(void),
+#endif
 #ifdef _WITH_PTHREAD
               check_files(struct directory_entry *, char *, int, char *,
                           int, int *, time_t, int *, off_t *, time_t *,
@@ -969,9 +984,9 @@ extern char   *check_paused_dir(struct directory_entry *, int *, int *, int *),
 
 extern void   add_file_mask(char *, struct dir_group *),
 #ifdef MULTI_FS_SUPPORT
-              check_file_dir(time_t, dev_t, char *, int),
+              check_file_dir(time_t, dev_t, int, char *, int),
 #else
-              check_file_dir(time_t, char *, int),
+              check_file_dir(time_t, int, char *, int),
 #endif
               check_file_pool_mem(int),
               check_old_time_jobs(int, char *),

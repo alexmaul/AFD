@@ -1,6 +1,6 @@
 /*
  *  fd.c - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 1995 - 2023 Deutscher Wetterdienst (DWD),
+ *  Copyright (c) 1995 - 2025 Deutscher Wetterdienst (DWD),
  *                            Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
@@ -943,9 +943,6 @@ main(int argc, char *argv[])
    system_log(DEBUG_SIGN, NULL, 0,
               "FD configuration: Max. connections              %d",
               max_connections);
-   system_log(DEBUG_SIGN, NULL, 0,
-              "FD configuration: Number of remote directories  %d",
-              no_of_retrieves);
    system_log(DEBUG_SIGN, NULL, 0,
               "FD configuration: Remote file check interval    %d (sec)",
               remote_file_check_interval);
@@ -4634,6 +4631,7 @@ zombie_check(struct connection *p_con,
 
                case TIMEOUT_ERROR         : /* Timeout arrived. */
                case CONNECTION_RESET_ERROR: /* Connection reset by peer. */
+               case PIPE_CLOSED_ERROR     : /* Pipe closed. */
                case CONNECT_ERROR         : /* Failed to connect to remote host. */
                case CONNECTION_REFUSED_ERROR: /* Connection refused. */
                case REMOTE_USER_ERROR     : /* Failed to send mail address. */
@@ -4644,6 +4642,7 @@ zombie_check(struct connection *p_con,
                case MKDIR_ERROR           : /* */
                case MOVE_ERROR            : /* Move file locally. */
                case STAT_TARGET_ERROR     : /* Failed to access target dir. */
+               case STAT_REMOTE_ERROR     : /* Failed to stat() remote file/dir. */
                case WRITE_REMOTE_ERROR    : /* */
                case MOVE_REMOTE_ERROR     : /* */
                case OPEN_REMOTE_ERROR     : /* Failed to open remote file. */

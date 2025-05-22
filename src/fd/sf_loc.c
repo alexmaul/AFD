@@ -1,6 +1,6 @@
 /*
  *  sf_loc.c - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 1996 - 2023 Deutscher Wetterdienst (DWD),
+ *  Copyright (c) 1996 - 2025 Deutscher Wetterdienst (DWD),
  *                            Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
@@ -65,6 +65,10 @@ DESCR__S_M1
  **                      mount with bind option in linux.
  **   15.09.2014 H.Kiehl Added simulation mode.
  **   06.07.2019 H.Kiehl Added trans_srename support.
+ **   15.06.2024 H.Kiehl Always print the full final name with path.
+ **   15.12.2024 H.Kiehl Added name2dir option.
+ **   09.01.2025 H.Kiehl On linux, when link() returns EPERM, assume
+ **                      that hardlinks are protected and try copy file.
  **
  */
 DESCR__E_M1
@@ -100,6 +104,8 @@ DESCR__E_M1
 #  define SPLICE_F_MORE 0x04
 # endif
 #endif
+
+/* #define DEBUG_ST_DEV */
 
 /* Global variables. */
 int                        counter_fd = -1,
@@ -370,6 +376,12 @@ main(int argc, char *argv[])
 
 #ifdef HAVE_STATX
             ldv = makedev(stat_buf.stx_dev_major, stat_buf.stx_dev_minor);
+# ifdef DEBUG_ST_DEV
+            trans_log(DEBUG_SIGN, __FILE__, __LINE__, NULL, NULL,
+                      "file_path=%s %x:%x %ld", file_path,
+                      stat_buf.stx_dev_major, stat_buf.stx_dev_minor,
+                      (pri_dev_t)ldv);
+# endif
 #else
             ldv = stat_buf.st_dev;
 #endif
@@ -388,6 +400,12 @@ main(int argc, char *argv[])
 #endif
             {
 #ifdef HAVE_STATX
+# ifdef DEBUG_ST_DEV
+               trans_log(DEBUG_SIGN, __FILE__, __LINE__, NULL, NULL,
+                         "target_dir=%s %x:%x %ld", db.target_dir,
+                         stat_buf.stx_dev_major, stat_buf.stx_dev_minor,
+                         makedev(stat_buf.stx_dev_major, stat_buf.stx_dev_minor));
+# endif
                if (makedev(stat_buf.stx_dev_major, stat_buf.stx_dev_minor) == ldv)
 #else
                if (stat_buf.st_dev == ldv)
@@ -539,6 +557,7 @@ main(int argc, char *argv[])
       p_ff_name = ff_name + strlen(ff_name);
       *p_ff_name++ = '/';
       *p_ff_name = '\0';
+      move_flag = 0;
 
       if ((db.lock == DOT) || (db.lock == DOT_VMS) ||
           (db.special_flag & UNIQUE_LOCKING))
@@ -549,7 +568,6 @@ main(int argc, char *argv[])
       {
          p_to_name = ff_name;
       }
-      move_flag = 0;
 
 #ifdef WITH_FAST_MOVE
       /*
@@ -621,6 +639,11 @@ main(int argc, char *argv[])
                     *p_if_name = '\0';
                     (void)strcat(if_name, p_file_name_buffer);
                     (void)strcat(if_name, db.lock_notation);
+                 }
+                 else
+                 {
+                    *p_if_name = '\0';
+                    (void)strcat(if_name, p_file_name_buffer);
                  }
 
             if (db.special_flag & UNIQUE_LOCKING)
@@ -706,35 +729,43 @@ main(int argc, char *argv[])
                                 p_file_name_buffer, MAX_FILENAME_LENGTH);
             }
 
-            if (db.trans_rename_rule[0] != '\0')
+            if (db.name2dir_char == '\0')
             {
-               register int k;
-   
-               for (k = 0; k < rule[db.trans_rule_pos].no_of_rules; k++)
+               if (db.trans_rename_rule[0] != '\0')
                {
-                  if (pmatch(rule[db.trans_rule_pos].filter[k],
-                             p_file_name_buffer, NULL) == 0)
+                  register int k;
+   
+                  for (k = 0; k < rule[db.trans_rule_pos].no_of_rules; k++)
                   {
-                     change_name(p_file_name_buffer,
-                                 rule[db.trans_rule_pos].filter[k],
-                                 rule[db.trans_rule_pos].rename_to[k],
-                                 p_ff_name,
-                                 MAX_PATH_LENGTH - (p_ff_name - ff_name),
-                                 &counter_fd, &unique_counter, db.id.job);
-                     break;
+                     if (pmatch(rule[db.trans_rule_pos].filter[k],
+                                p_file_name_buffer, NULL) == 0)
+                     {
+                        change_name(p_file_name_buffer,
+                                    rule[db.trans_rule_pos].filter[k],
+                                    rule[db.trans_rule_pos].rename_to[k],
+                                    p_ff_name,
+                                    MAX_PATH_LENGTH - (p_ff_name - ff_name),
+                                    &counter_fd, &unique_counter, db.id.job);
+                        break;
+                     }
                   }
                }
-            }
-            else if (db.cn_filter != NULL)
-                 {
-                    if (pmatch(db.cn_filter, p_file_name_buffer, NULL) == 0)
+               else if (db.cn_filter != NULL)
                     {
-                       change_name(p_file_name_buffer, db.cn_filter,
-                                   db.cn_rename_to, p_ff_name,
-                                   MAX_PATH_LENGTH - (p_ff_name - ff_name),
-                                   &counter_fd, &unique_counter, db.id.job);
+                       if (pmatch(db.cn_filter, p_file_name_buffer, NULL) == 0)
+                       {
+                          change_name(p_file_name_buffer, db.cn_filter,
+                                      db.cn_rename_to, p_ff_name,
+                                      MAX_PATH_LENGTH - (p_ff_name - ff_name),
+                                      &counter_fd, &unique_counter, db.id.job);
+                       }
                     }
-                 }
+            }
+            else
+            {
+               name2dir(db.name2dir_char, p_file_name_buffer, p_ff_name,
+                        MAX_PATH_LENGTH - (p_ff_name - ff_name));
+            }
 
 #ifdef _OUTPUT_LOG
             if (db.output_log == YES)
@@ -778,7 +809,7 @@ try_link_again:
                            if (errno != ENOENT)
                            {
                               trans_log(INFO_SIGN, __FILE__, __LINE__, NULL, NULL,
-                                        "File `%s' did already exist, removed it and linked again.",
+                                        "File `%s' did already exist, removed it.",
                                         p_to_name);
                            }
 #endif
@@ -856,11 +887,21 @@ try_link_again:
 
                                             if (link(source_file, p_to_name) == -1)
                                             {
-                                               if (errno == EXDEV)
+                                               if (errno == EXDEV) /* Cross link error. */
                                                {
                                                   lfs = NO;
-                                                  goto cross_link_error;
+                                                  goto link_error_try_copy;
                                                }
+#ifdef LINUX
+                                               else if (errno == EPERM)
+                                                    {
+                                                       trans_log(WARN_SIGN, __FILE__, __LINE__, NULL, NULL,
+                                                                 "link() error, assume hardlinks are protected for %s. Copying files.",
+                                                                 source_file);
+                                                       lfs = NO;
+                                                       goto link_error_try_copy;
+                                                    }
+#endif
                                                else
                                                {
                                                   trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
@@ -880,10 +921,20 @@ try_link_again:
                                             }
                                          }
                                       }
-                                      else if (errno == EXDEV)
+#ifdef LINUX
+                                      else if (errno == EPERM)
+                                           {
+                                              trans_log(WARN_SIGN, __FILE__, __LINE__, NULL, NULL,
+                                                        "link() error, assume hardlinks are protected for %s. Copying files.",
+                                                        source_file);
+                                              lfs = NO;
+                                              goto link_error_try_copy;
+                                           }
+#endif
+                                      else if (errno == EXDEV) /* Cross link error. */
                                            {
                                               lfs = NO;
-                                              goto cross_link_error;
+                                              goto link_error_try_copy;
                                            }
                                            else
                                            {
@@ -962,10 +1013,20 @@ try_link_again:
                                 exit(MOVE_ERROR);
                              }
                           }
-                     else if (errno == EXDEV)
+#ifdef LINUX
+                     else if (errno == EPERM)
+                          {
+                             trans_log(WARN_SIGN, __FILE__, __LINE__, NULL, NULL,
+                                       "link() error, assume hardlinks are protected for %s. Copying files.",
+                                       source_file);
+                             lfs = NO;
+                             goto link_error_try_copy;
+                          }
+#endif
+                     else if (errno == EXDEV) /* Cross link error. */
                           {
                              lfs = NO;
-                             goto cross_link_error;
+                             goto link_error_try_copy;
                           }
                           else
                           {
@@ -991,7 +1052,7 @@ try_link_again:
             }
             else
             {
-cross_link_error:
+link_error_try_copy:
                if ((ret = copy_file_mkdir(source_file, p_to_name,
                                           p_file_name_buffer,
                                           &additional_length)) != SUCCESS)
@@ -1214,72 +1275,113 @@ cross_link_error:
                            exit(RENAME_ERROR);
                         }
                      }
-                     else
-                     {
-                        char reason_str[23],
-                             *sign;
+                     else if (errno == EXDEV) /* Cross link error. */
+                          {
+                             if ((ret = copy_file_mkdir(if_name, ff_name,
+                                                        p_file_name_buffer,
+                                                        &additional_length)) != SUCCESS)
+                             {
+                                trans_log(ERROR_SIGN, __FILE__, __LINE__, NULL, NULL,
+                                          "Failed to copy file `%s' to `%s'",
+                                          if_name, ff_name);
+                                rm_dupcheck_crc(source_file, p_file_name_buffer,
+                                                *p_file_size_buffer);
+                                exit(ret);
+                             }
+                             else
+                             {
+                                move_flag |= FILES_COPIED;
+                                if ((fsa->protocol_options & KEEP_TIME_STAMP) &&
+                                    (file_mtime_buffer != NULL) &&
+                                    (simulation_mode != YES))
+                                {
+                                   struct utimbuf old_time;
 
-                        if (errno == ENOENT)
-                        {
-                           int          tmp_errno = errno;
-                           char         tmp_char = *p_ff_name;
+                                   old_time.actime = time(NULL);
+                                   old_time.modtime = *p_file_mtime_buffer;
+                                   if (utime(ff_name, &old_time) == -1)
+                                   {
+                                      trans_log(WARN_SIGN, __FILE__, __LINE__, NULL, NULL,
+                                                "Failed to set time of file %s : %s",
+                                                ff_name, strerror(errno));
+                                   }
+                                }
+                                if (fsa->debug > NORMAL_MODE)
+                                {
+                                   trans_db_log(INFO_SIGN, __FILE__, __LINE__, NULL,
+                                                "Copied file `%s' to `%s'.",
+                                                source_file, ff_name);
+                                }
+                             }
+                          }
+                          else
+                          {
+                             char reason_str[23],
+                                  *sign;
+
+                             if (errno == ENOENT)
+                             {
+                                int          tmp_errno = errno;
+                                char         tmp_char = *p_ff_name;
 #ifdef HAVE_STATX
-                           struct statx tmp_stat_buf;
+                                struct statx tmp_stat_buf;
 #else
-                           struct stat  tmp_stat_buf;
+                                struct stat  tmp_stat_buf;
 #endif
 
-                           *p_ff_name = '\0';
+                                *p_ff_name = '\0';
 #ifdef HAVE_STATX
-                           if ((statx(0, if_name, AT_STATX_SYNC_AS_STAT,
-                                      0, &tmp_stat_buf) == -1) &&
-                               (errno == ENOENT))
-#else
-                           if ((stat(if_name, &tmp_stat_buf) == -1) &&
-                               (errno == ENOENT))
-#endif
-                           {
-                              (void)strcpy(reason_str, "(source missing) ");
-                              ret = STILL_FILES_TO_SEND;
-                              sign = DEBUG_SIGN;
-                           }
-#ifdef HAVE_STATX
-                           else if ((statx(0, ff_name, AT_STATX_SYNC_AS_STAT,
+                                if ((statx(0, if_name, AT_STATX_SYNC_AS_STAT,
                                            0, &tmp_stat_buf) == -1) &&
                                     (errno == ENOENT))
 #else
-                           else if ((stat(ff_name, &tmp_stat_buf) == -1) &&
+                                if ((stat(if_name, &tmp_stat_buf) == -1) &&
                                     (errno == ENOENT))
 #endif
                                 {
                                    (void)strcpy(reason_str,
-                                                "(destination missing) ");
-                                   ret = RENAME_ERROR;
-                                   sign = WARN_SIGN;
+                                                "(source missing) ");
+                                   ret = STILL_FILES_TO_SEND;
+                                   sign = DEBUG_SIGN;
                                 }
-                                else
-                                {
-                                   reason_str[0] = '\0';
-                                   ret = RENAME_ERROR;
-                                   sign = WARN_SIGN;
-                                }
+#ifdef HAVE_STATX
+                                else if ((statx(0, ff_name,
+                                                AT_STATX_SYNC_AS_STAT,
+                                                0, &tmp_stat_buf) == -1) &&
+                                         (errno == ENOENT))
+#else
+                                else if ((stat(ff_name, &tmp_stat_buf) == -1) &&
+                                         (errno == ENOENT))
+#endif
+                                     {
+                                        (void)strcpy(reason_str,
+                                                     "(destination missing) ");
+                                        ret = RENAME_ERROR;
+                                        sign = WARN_SIGN;
+                                     }
+                                     else
+                                     {
+                                        reason_str[0] = '\0';
+                                        ret = RENAME_ERROR;
+                                        sign = WARN_SIGN;
+                                     }
 
-                           *p_ff_name = tmp_char;
-                           errno = tmp_errno;
-                        }
-                        else
-                        {
-                           ret = RENAME_ERROR;
-                           sign = WARN_SIGN;
-                        }
-                        trans_log(sign, __FILE__, __LINE__, NULL, NULL,
-                                  "Failed to rename() file `%s' to `%s' %s: %s",
-                                  if_name, ff_name, reason_str,
-                                  strerror(errno));
-                        rm_dupcheck_crc(source_file, p_file_name_buffer,
-                                        *p_file_size_buffer);
-                        exit(ret);
-                     }
+                                *p_ff_name = tmp_char;
+                                errno = tmp_errno;
+                             }
+                             else
+                             {
+                                ret = RENAME_ERROR;
+                                sign = WARN_SIGN;
+                             }
+                             trans_log(sign, __FILE__, __LINE__, NULL, NULL,
+                                       "Failed to rename() file `%s' to `%s' %s: %s",
+                                       source_file, ff_name, reason_str,
+                                       strerror(errno));
+                             rm_dupcheck_crc(source_file, p_file_name_buffer,
+                                             *p_file_size_buffer);
+                             exit(ret);
+                          }
                   }
                   else
                   {
@@ -1438,8 +1540,16 @@ cross_link_error:
                   if (db.output_log == YES)
                   {
                      (void)memcpy(ol_file_name, db.p_unique_name, db.unl);
-                     if ((db.trans_rename_rule[0] != '\0') ||
-                         (db.cn_filter != NULL))
+                     if (ff_name[0] == '/')
+                     {
+                        *ol_file_name_length = (unsigned short)snprintf(ol_file_name + db.unl,
+                                                                        MAX_FILENAME_LENGTH + 1 + MAX_FILENAME_LENGTH + 2,
+                                                                        "%s%c%s",
+                                                                        p_file_name_buffer,
+                                                                        SEPARATOR_CHAR,
+                                                                        ff_name) + db.unl;
+                     }
+                     else
                      {
                         *ol_file_name_length = (unsigned short)snprintf(ol_file_name + db.unl,
                                                                         MAX_FILENAME_LENGTH + 1 + MAX_FILENAME_LENGTH + 2,
@@ -1447,18 +1557,10 @@ cross_link_error:
                                                                         p_file_name_buffer,
                                                                         SEPARATOR_CHAR,
                                                                         ff_name) + db.unl;
-                        if (*ol_file_name_length >= (MAX_FILENAME_LENGTH + 1 + MAX_FILENAME_LENGTH + 2 + db.unl))
-                        {
-                           *ol_file_name_length = MAX_FILENAME_LENGTH + 1 + MAX_FILENAME_LENGTH + 2 + db.unl;
-                        }
                      }
-                     else
+                     if (*ol_file_name_length >= (MAX_FILENAME_LENGTH + 1 + MAX_FILENAME_LENGTH + 2 + db.unl))
                      {
-                        (void)strcpy(ol_file_name + db.unl, p_file_name_buffer);
-                        *ol_file_name_length = (unsigned short)strlen(ol_file_name);
-                        ol_file_name[*ol_file_name_length] = SEPARATOR_CHAR;
-                        ol_file_name[*ol_file_name_length + 1] = '\0';
-                        (*ol_file_name_length)++;
+                        *ol_file_name_length = MAX_FILENAME_LENGTH + 1 + MAX_FILENAME_LENGTH + 2 + db.unl;
                      }
                      *ol_file_size = *p_file_size_buffer + additional_length;
                      *ol_job_number = fsa->job_status[(int)db.job_no].job_id;
@@ -1494,8 +1596,16 @@ cross_link_error:
                   if (db.output_log == YES)
                   {
                      (void)memcpy(ol_file_name, db.p_unique_name, db.unl);
-                     if ((db.trans_rename_rule[0] != '\0') ||
-                         (db.cn_filter != NULL))
+                     if (ff_name[0] == '/')
+                     {
+                        *ol_file_name_length = (unsigned short)snprintf(ol_file_name + db.unl,
+                                                                        MAX_FILENAME_LENGTH,
+                                                                        "%s%c%s",
+                                                                        p_file_name_buffer,
+                                                                        SEPARATOR_CHAR,
+                                                                        ff_name) + db.unl;
+                     }
+                     else
                      {
                         *ol_file_name_length = (unsigned short)snprintf(ol_file_name + db.unl,
                                                                         MAX_FILENAME_LENGTH,
@@ -1503,14 +1613,6 @@ cross_link_error:
                                                                         p_file_name_buffer,
                                                                         SEPARATOR_CHAR,
                                                                         ff_name) + db.unl;
-                     }
-                     else
-                     {
-                        (void)strcpy(ol_file_name + db.unl, p_file_name_buffer);
-                        *ol_file_name_length = (unsigned short)strlen(ol_file_name);
-                        ol_file_name[*ol_file_name_length] = SEPARATOR_CHAR;
-                        ol_file_name[*ol_file_name_length + 1] = '\0';
-                        (*ol_file_name_length)++;
                      }
                      (void)strcpy(&ol_file_name[*ol_file_name_length + 1], &db.archive_dir[db.archive_offset]);
                      *ol_file_size = *p_file_size_buffer + additional_length;
@@ -1558,8 +1660,16 @@ try_again_unlink:
                if (db.output_log == YES)
                {
                   (void)memcpy(ol_file_name, db.p_unique_name, db.unl);
-                  if ((db.trans_rename_rule[0] != '\0') ||
-                      (db.cn_filter != NULL))
+                  if (ff_name[0] == '/')
+                  {
+                     *ol_file_name_length = (unsigned short)snprintf(ol_file_name + db.unl,
+                                                                     MAX_FILENAME_LENGTH + 1 + MAX_FILENAME_LENGTH + 2,
+                                                                     "%s%c%s",
+                                                                     p_file_name_buffer,
+                                                                     SEPARATOR_CHAR,
+                                                                     ff_name) + db.unl;
+                  }
+                  else
                   {
                      *ol_file_name_length = (unsigned short)snprintf(ol_file_name + db.unl,
                                                                      MAX_FILENAME_LENGTH + 1 + MAX_FILENAME_LENGTH + 2,
@@ -1567,18 +1677,10 @@ try_again_unlink:
                                                                      p_file_name_buffer,
                                                                      SEPARATOR_CHAR,
                                                                      ff_name) + db.unl;
-                     if (*ol_file_name_length >= (MAX_FILENAME_LENGTH + 1 + MAX_FILENAME_LENGTH + 2 + db.unl))
-                     {
-                        *ol_file_name_length = MAX_FILENAME_LENGTH + 1 + MAX_FILENAME_LENGTH + 2 + db.unl;
-                     }
                   }
-                  else
+                  if (*ol_file_name_length >= (MAX_FILENAME_LENGTH + 1 + MAX_FILENAME_LENGTH + 2 + db.unl))
                   {
-                     (void)strcpy(ol_file_name + db.unl, p_file_name_buffer);
-                     *ol_file_name_length = (unsigned short)strlen(ol_file_name);
-                     ol_file_name[*ol_file_name_length] = SEPARATOR_CHAR;
-                     ol_file_name[*ol_file_name_length + 1] = '\0';
-                     (*ol_file_name_length)++;
+                     *ol_file_name_length = MAX_FILENAME_LENGTH + 1 + MAX_FILENAME_LENGTH + 2 + db.unl;
                   }
                   *ol_file_size = *p_file_size_buffer + additional_length;
                   *ol_job_number = fsa->job_status[(int)db.job_no].job_id;

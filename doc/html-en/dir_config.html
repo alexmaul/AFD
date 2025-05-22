@@ -83,7 +83,32 @@ There are currently five schemes for fetching files supported:
 </tr>
 <tr>
    <td>exec</td>
-   <td>Execute some external command to retrieve data.</td>
+   <td>Execute some external command to retrieve data.
+       The following environment variables are set:
+       <table border>
+       <tr>
+          <th>Variable name</th>
+          <th>Description</th>
+          <th>Example</th>
+      </tr>
+      <tr>
+         <td>AFD_HC_TIMEOUT</td>
+         <td>Transfer timeout in seconds set in HOST_CONFIG.</td>
+         <td>AFD_HC_TIMEOUT=120</td>
+      </tr>
+      <tr>
+         <td>AFD_HC_BLOCKSIZE</td>
+         <td>Transfer blocksize in bytes set in HOST_CONFIG.</td>
+         <td>AFD_HC_BLOCKSIZE=4096</td>
+      </tr>
+      <tr>
+         <td>AFD_CURRENT_HOSTNAME</td>
+         <td>The real hostname set in HOST_CONFIG. If two host names
+             are set, this will hold the current active hosstname.</td>
+         <td>AFD_CURRENT_HOSTNAME=ducktown.org</td>
+      </tr>
+      </table>
+   </td>
    <td>exec://ext_fetch/fetch_command</td>
 </tr>
 </table>
@@ -143,7 +168,7 @@ you can use groups of directory names. A group can be specified with the
 sign &amp; and a group name in brackets, either {} or []. In case the square
 brackets [] are used the group name will be looked up in
 $AFD_WORK_DIR/etc/group.list and will be inserted. Curly brackets make
-it look into the file with the name $AFD_WORK_DIR/etc/groups/directory/group_name.
+it look into the file with the name $AFD_WORK_DIR/etc/groups/source/group_name.
 One can also use this group name to only insert part of the directory name. For
 example a directory entry specified as follows:
 </p>
@@ -499,6 +524,50 @@ defaults is shown in the table below:
    <td align=center>&nbsp;</td>
 </tr>
 <tr>
+   <td width="30%"><a name="get_dir_list">get dir list[ yes|no|href]</a></td>
+   <td>This option is only for retrieving files via HTTP and can have
+       one of the following parameters:
+       <center><table border>
+       <tr>
+          <th>Parameter</th>
+          <th>Description</th>
+       </tr>
+       <tr>
+          <td><a>yes</a></td>
+          <td>AFD will try to get a directory listing and then
+              automatically try detect the listing type. Note, it
+              only knows some well know listing types from nginx
+              and apache. If it is unable to detect it, it will
+              switch to href automatically.</td>
+       </tr>
+       <tr>
+          <td><a>no</a></td>
+          <td>This will disable the directory scanning for this
+              directory. This can be used when directory listing are
+              not possible or disabled because of security reasons.
+              This also means that under [files] the full filenames
+              without wildcards must be listed.</td>
+       </tr>
+       <tr>
+          <td><a>href</a></td>
+          <td>There are many different types of HTML directory listings
+              and AFD only knows a few. With href it will get nearly all
+              href entries from the page, so one needs to set a
+              correct filter in [files] to download the correct files.
+              Note that it will not be able to differentiate between
+              files or directories (or other special files). Only
+              those href entries which reference the same server and
+              protocol will be shown. To facilitate the creation of
+              the correct [files] filter, there is a program
+              <a href="tools.html#ahtml_list".</td>
+       </tr>
+       </table></center></td>
+       If none of the above is specified, it assumes 'yes'.</td>
+   <td align=center>&nbsp;</td>
+   <td align=center>X</td>
+   <td align=center>&nbsp;</td>
+</tr>
+<tr>
    <td width="30%"><a name="do_not_get_dir_list">do not get dir list</a></td>
    <td>Setting this option will disable the directory scanning for
        this directory. This can be used when directory listing are
@@ -557,28 +626,56 @@ defaults is shown in the table below:
    <td align=center>&nbsp;</td>
 </tr>
 <tr>
-   <td width="30%"><a name="store_retrieve_list">store retrieve list [once|once not exact|append]</a></td>
-   <td><p>When the above option &lt;do not remove&gt; is set, it can
+   <td width="30%"><a name="store_retrieve_list">store retrieve list [not exact|once|once not exact|append]</a></td>
+   <td>When the above option &lt;do not remove&gt; is set, it can
        happen that always the same files are being collected by the
-       AMG. To avoid this situation this option can be set. Then AMG
+       AMG/FD. To avoid this situation this option can be set. Then AMG/FD
        will keep a list of files and their modification time and there
        size of all files found during the last scan. So only when a
-       file has changed will it be retrieved by the AMG. When the
-       optional parameter 'once' is appended, files will be fetched
-       only once, regardless if the size or modification time changes.
-       This is can be useful for directories with lots of files and
-       protocols where we need to poll each individual file for size
-       and date. With 'once not exact' it will not send any additional
-       command for each file to get the exact size and date, it just
-       excepts the 'inaccurate' data from the directory listing. For SFTP
-       the once and 'once not exact' parameter is not needed since all
-       needed values are retrieved during the directory scan and no
-       additional polling is required. However when set for SFTP it
-       will only fetch the file once.</p>
-       <p>When append is set, it only fetches the new appended data.
-       This can be useful if you want to retrieve for example log data
-       that is always appended. It will only retrieve the new appended
-       data and not the whole file.</p></td>
+       file has changed will it be retrieved by the AMG/FD. The following
+       additional parameters are possible:
+       <center><table border>
+       <tr>
+          <th>Extension</th>
+          <th>Description</th>
+       </tr>
+       <tr>
+          <td><a name="not_exact">not exact</a></td>
+          <td>Some protocols do not deliver the exact size and/or
+              date when giving a list of file names. By exact we
+              mean for size the unit byte and by time the unit
+              second. For example many web servers just deliver
+              time accuracy in minutes. In such a case AFD will
+              try to send an additional command (HEAD (HTTP), MDTM (FTP),
+              etc.) to get this value. However with lots of files
+              in a listing and high latency networks, it can consume
+              a lot of time before all the exact time (in second) and
+              size (in bytes) are collected. In some cases this
+              may not be necessary. When the file name itself
+              contains enough redundant information, directory
+              contend is cleaned, etc. In such a case with the
+              'not exact' extension to 'store retrieve list', AFD
+              will not send these additional commands.</td>
+       </tr>
+       <tr>
+          <td><a name="once">once</a></td>
+          <td>With this option files will be fetched only once even
+              if the size and/or date of the file changes.</td>
+       </tr>
+       <tr>
+          <td><a name="once_not_exact">once not exact</a></td>
+          <td>Same as above only with the 'not exact' so no
+              additional commands are send, to try and get
+              the exact size (in byte) and date (in seconds).</td>
+       </tr>
+       <tr>
+          <td><a name="append">append</a></td>
+          <td>With append, it only fetches the new appended data.
+              This can be useful if you want to retrieve for example
+              log data that is always appended. It will only retrieve
+              the new appended data and not the whole file.</td>
+       </tr>
+       </table></center></td>
    <td align=center>X (not append)</td>
    <td align=center>X</td>
    <td align=center>&nbsp;</td>
@@ -928,6 +1025,15 @@ defaults is shown in the table below:
    <td align=center>$AFD_WORK_DIR</td>
 </tr>
 <tr>
+   <td width="30%"><a name="retrieve_zero_size">retrieve zero size</a></td>
+   <td>When this is set, AFD will NOT retrieve the content of
+       the file.  It will then distribute a zero length file. The main
+       purpose of this option is for testing.</td>
+   <td align=center>&nbsp;</td>
+   <td align=center>X</td>
+   <td align=center>not set</td>
+</tr>
+<tr>
    <th width="30%">Option</th>
    <th>Description</th>
    <th>Local Dir</th>
@@ -1270,13 +1376,46 @@ There are currently seven schemes supported:
 </tr>
 <tr>
    <td>file</td>
-   <td>Copies files to another directory.</td>
+   <td>Moves the files to another directory, if the file is in the
+       same filesystem. Otherwise the files will be copied.</td>
    <td>file://local/directory</td>
 </tr>
 <tr>
    <td>exec</td>
    <td>Calls an external program to transmit the file to another
-       destination.</td>
+       destination. The program will be executed in the directory
+       with all the files AFD has available for the job. If
+       no %s modifier is set, the program will be called once
+       for all files. If the %s modifier is set to substitute the
+       file name in the command line it will execute the program for
+       each file in the job. If there are three files, it will then
+       call the program 3 times. The %s modifier may be set 10
+       (MAX_EXEC_FILE_SUBSTITUTION) times. The following environment
+       variables are set:
+       <table border>
+       <tr>
+          <th>Variable name</th>
+          <th>Description</th>
+          <th>Example</th>
+      </tr>
+      <tr>
+         <td>AFD_HC_TIMEOUT</td>
+         <td>Transfer timeout in seconds set in HOST_CONFIG.</td>
+         <td>AFD_HC_TIMEOUT=120</td>
+      </tr>
+      <tr>
+         <td>AFD_HC_BLOCKSIZE</td>
+         <td>Transfer blocksize in bytes set in HOST_CONFIG.</td>
+         <td>AFD_HC_BLOCKSIZE=4096</td>
+      </tr>
+      <tr>
+         <td>AFD_CURRENT_HOSTNAME</td>
+         <td>The real hostname set in HOST_CONFIG. If two host names
+             are set, this will hold the current active hosstname.</td>
+         <td>AFD_CURRENT_HOSTNAME=ducktown.org</td>
+      </tr>
+      </table>
+       </td>
    <td>exec://printer/lpr -Pmy_printer %s</td>
 </tr>
 <tr>
@@ -1293,6 +1432,16 @@ There are currently seven schemes supported:
    <td>scp</td>
    <td>Sends files via SSH using the SCP protocol.</td>
    <td>scp://donald:secret@ducktown/directory</td>
+</tr>
+<tr>
+   <td>http</td>
+   <td>Sends files via HTTP.</td>
+   <td>http://donald:secret@ducktown/directory</td>
+</tr>
+<tr>
+   <td>https</td>
+   <td>Sends files via HTTPS.</td>
+   <td>https://donald:secret@ducktown/directory</td>
 </tr>
 </table>
 <p>
@@ -1320,6 +1469,7 @@ section. Valid options can be taken from the following table:
    <th>sftp</th>
    <th>scp</th>
    <th>exec</th>
+   <th>http</th>
 </tr>
 <tr>
    <td><a name="priority">priority x</a></td>
@@ -1334,11 +1484,13 @@ section. Valid options can be taken from the following table:
    <td align=center>X</td>
    <td align=center>X</td>
    <td align=center>X</td>
+   <td align=center>X</td>
 </tr>
 <tr>
    <td><a name="delete">delete</a></td>
    <td>Deletes all files.</td>
    <td align=center>X</td>
+   <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
@@ -1415,6 +1567,7 @@ section. Valid options can be taken from the following table:
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
+   <td><pre>&nbsp;</pre></td>
 </tr>
 <tr>
    <td><a name="time_no_collect">time no collect &lt;min hour dom month dow&gt;</a></td>
@@ -1422,6 +1575,7 @@ section. Valid options can be taken from the following table:
        will be collected (these will be deleted) outside the given time
        frames. The number of time no collect option is not limited.</td>
    <td align=center>X</td>
+   <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
@@ -1439,6 +1593,7 @@ section. Valid options can be taken from the following table:
        in /usr/share/zoneinfo, /usr/lib/zoneinfo, /usr/share/lib/zoneinfo,
        ...</td>
    <td align=center>X</td>
+   <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
@@ -1465,6 +1620,7 @@ section. Valid options can be taken from the following table:
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
+   <td><pre>&nbsp;</pre></td>
 </tr>
 <tr>
    <td><a name="extension">extension[ overwrite]</a></td>
@@ -1483,11 +1639,13 @@ section. Valid options can be taken from the following table:
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
+   <td><pre>&nbsp;</pre></td>
 </tr>
 <tr>
    <td><a name="prefix_add">prefix add xx</td>
    <td>Adds a prefix to the file name.</td>
    <td align=center>X</td>
+   <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
@@ -1510,6 +1668,7 @@ section. Valid options can be taken from the following table:
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
+   <td><pre>&nbsp;</pre></td>
 </tr>
 <tr>
    <th width="30%">Option name</th>
@@ -1523,6 +1682,7 @@ section. Valid options can be taken from the following table:
    <th>sftp</th>
    <th>scp</th>
    <th>exec</th>
+   <th>http</th>
 </tr>
 <tr>
    <td><a name="toupper">toupper</a></td>
@@ -1536,11 +1696,13 @@ section. Valid options can be taken from the following table:
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
+   <td><pre>&nbsp;</pre></td>
 </tr>
 <tr>
    <td><a name="tolower">tolower</a></td>
    <td>Convert all letters of the file name to lower case.</td>
    <td align=center>X</td>
+   <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
@@ -1569,11 +1731,13 @@ section. Valid options can be taken from the following table:
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
+   <td><pre>&nbsp;</pre></td>
 </tr>
 <tr>
    <td><a name="mirror_source">mirror source</a></td>
    <td>Deletes all files from destination not found in source.</td>
    <td align=center>X</td>
+   <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
@@ -1604,6 +1768,7 @@ section. Valid options can be taken from the following table:
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
+   <td><pre>&nbsp;</pre></td>
 </tr>
 <tr>
    <td><a name="rename">rename &lt;rule&gt; [overwrite] [with_path]</a></td>
@@ -1617,6 +1782,7 @@ section. Valid options can be taken from the following table:
        (MAX_RULE_HEADER_LENGTH) characters.
    </td>
    <td align=center>X</td>
+   <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
@@ -1650,6 +1816,7 @@ section. Valid options can be taken from the following table:
    <td align=center>X</td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
+   <td align=center>X</td>
 </tr>
 <tr>
    <td><a name="trans_rename">trans_rename &lt;rule&gt; [primary_only|secondary_only|dupcheck[see dupcheck options]]</a></td>
@@ -1673,6 +1840,27 @@ section. Valid options can be taken from the following table:
    <td align=center>X</td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
+   <td align=center>X</td>
+</tr>
+<tr>
+   <td><a name="name2dir">name2dir &lt;character&gt;</a></td>
+   <td>The file name will be used to put the file into a directory
+       by replacing all &lt;character&gt; in the original name
+       with a /. If it should create the directory either
+       <a href="dir_config.html#create_target_dir">create target dir</a> or
+       <a href="afd_config.html#create_target_dir">CREATE TARGET DIR</a>
+       must be set.
+   </td>
+   <td><pre>&nbsp;</pre></td>
+   <td><pre>&nbsp;</pre></td>
+   <td align=center>X</td>
+   <td><pre>&nbsp;</pre></td>
+   <td align=center>X</td>
+   <td><pre>&nbsp;</pre></td>
+   <td align=center>X</td>
+   <td><pre>&nbsp;</pre></td>
+   <td><pre>&nbsp;</pre></td>
+   <td align=center>X</td>
 </tr>
 <tr>
    <td><a name="force_copy">force copy</a></td>
@@ -1684,6 +1872,7 @@ section. Valid options can be taken from the following table:
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td align=center>X</td>
+   <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
@@ -1708,6 +1897,7 @@ section. Valid options can be taken from the following table:
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
+   <td><pre>&nbsp;</pre></td>
 </tr>
 <tr>
    <td><a name="chmod">chmod mode</a></td>
@@ -1728,6 +1918,7 @@ section. Valid options can be taken from the following table:
    <td align=center>X</td>
    <td align=center>X</td>
    <td align=center>X</td>
+   <td align=center>X</td>
 </tr>
 <tr>
    <td><a name="hardlink">hardlink &lt;newname_1&gt;[ &lt;newname_n&gt;] </a></td>
@@ -1742,6 +1933,7 @@ section. Valid options can be taken from the following table:
    <td align=center>X</td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
+   <td><pre>&nbsp;</pre></td>
 </tr>
 <tr>
    <td><a name="symlink">symlink &lt;newname_1&gt;[ &lt;newname_n&gt;] </a></td>
@@ -1754,6 +1946,7 @@ section. Valid options can be taken from the following table:
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td align=center>X</td>
+   <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
 </tr>
@@ -1771,6 +1964,7 @@ section. Valid options can be taken from the following table:
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td align=center>X</td>
+   <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
@@ -1802,6 +1996,7 @@ section. Valid options can be taken from the following table:
    <td align=center>X</td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
+   <td align=center>X</td>
 </tr>
 <tr>
    <td><a name="do_not_create_target_dir">do not create target dir</a></td>
@@ -1818,6 +2013,7 @@ section. Valid options can be taken from the following table:
    <td align=center>X</td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
+   <td align=center>X</td>
 </tr>
 <tr>
    <th width="30%">Option name</th>
@@ -1831,6 +2027,7 @@ section. Valid options can be taken from the following table:
    <th>sftp</th>
    <th>scp</th>
    <th>exec</th>
+   <th>http</th>
 </tr>
 <tr>
    <td><a name="tiff2gts">tiff2gts</a></td>
@@ -1844,11 +2041,13 @@ section. Valid options can be taken from the following table:
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
+   <td><pre>&nbsp;</pre></td>
 </tr>
 <tr>
    <td><a name="gts2tiff">gts2tiff</a></td>
    <td>Converts T4-GTS files to TIFF-files.</td>
    <td align=center>X</td>
+   <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
@@ -1904,6 +2103,7 @@ section. Valid options can be taken from the following table:
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
+   <td><pre>&nbsp;</pre></td>
 </tr>
 <tr>
    <td><a name="grib2wmo">grib2wmo[ CCCC]</a></td>
@@ -1912,6 +2112,7 @@ section. Valid options can be taken from the following table:
        type indicator. You can optionally supply the CCCC if you
        do wish to overrule the one from the GRIB.</td>
    <td align=center>X</td>
+   <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
@@ -1944,12 +2145,14 @@ section. Valid options can be taken from the following table:
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
+   <td><pre>&nbsp;</pre></td>
 </tr>
 <tr>
    <td>afw2wmo</td>
    <td>afw2wmo will convert the old AFW format used at DWD to WMO
        bulletin format.</td>
    <td align=center>X</td>
+   <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
@@ -2052,6 +2255,7 @@ section. Valid options can be taken from the following table:
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
+   <td><pre>&nbsp;</pre></td>
 </tr>
 <tr>
    <th width="30%">Option name</th>
@@ -2065,6 +2269,7 @@ section. Valid options can be taken from the following table:
    <th>sftp</th>
    <th>scp</th>
    <th>exec</th>
+   <th>http</th>
 </tr>
 <tr>
    <td><a name="convert">convert &lt;type&gt;</a></td>
@@ -2157,6 +2362,7 @@ section. Valid options can be taken from the following table:
       </table>
    </td>
    <td align=center>X</td>
+   <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
@@ -2272,6 +2478,7 @@ section. Valid options can be taken from the following table:
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
+   <td><pre>&nbsp;</pre></td>
 </tr>
 <tr>
    <th width="30%">Option name</th>
@@ -2285,6 +2492,7 @@ section. Valid options can be taken from the following table:
    <th>sftp</th>
    <th>scp</th>
    <th>exec</th>
+   <th>http</th>
 </tr>
 <tr>
    <td><a name="exec">exec [-d|-D|-l|-L|-s|-t] &lt;command&gt;</a></td>
@@ -2325,12 +2533,14 @@ section. Valid options can be taken from the following table:
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
+   <td><pre>&nbsp;</pre></td>
 </tr>
 <tr>
    <td>execd &lt;command&gt;</td>
    <td>Same as the exec option above, but deletes the original file
        after executing the command.</td>
    <td align=center>X</td>
+   <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
@@ -2347,6 +2557,7 @@ section. Valid options can be taken from the following table:
        deleted. This only works if no %s is found in the command string,
        otherwise it will behave just like the exec option.</td>
    <td align=center>X</td>
+   <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
@@ -2387,6 +2598,7 @@ section. Valid options can be taken from the following table:
    <td align=center>X</td>
    <td align=center>X</td>
    <td align=center>X</td>
+   <td><pre>&nbsp;</pre></td>
 </tr>
 <tr>
    <td><a name="lock">[u]lock &lt;type&gt;</a></td>
@@ -2437,6 +2649,7 @@ section. Valid options can be taken from the following table:
    <td align=center>X</td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
+   <td align=center>X</td>
 </tr>
 <tr>
    <td><a name="lockp">lockp .zz</a></td>
@@ -2452,6 +2665,7 @@ section. Valid options can be taken from the following table:
    <td align=center>X</td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
+   <td align=center>X</td>
 </tr>
 <tr>
    <td><a name="sequence_locking">sequence locking</a></td>
@@ -2473,6 +2687,7 @@ section. Valid options can be taken from the following table:
    <td align=center>X</td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
+   <td><pre>&nbsp;</pre></td>
 </tr>
 <tr>
    <th width="30%">Option name</th>
@@ -2486,6 +2701,7 @@ section. Valid options can be taken from the following table:
    <th>sftp</th>
    <th>scp</th>
    <th>exec</th>
+   <th>http</th>
 </tr>
 <tr>
    <td><a name="archive">archive x[d|h|m|s]</a></td>
@@ -2523,10 +2739,12 @@ section. Valid options can be taken from the following table:
    <td align=center>X</td>
    <td align=center>X</td>
    <td align=center>X</td>
+   <td align=center>X</td>
 </tr>
 <tr>
    <td><a name="age-limit">age-limit x</a></td>
    <td>Files older then x seconds will not get send. They will be removed.</td>
+   <td align=center>X</td>
    <td align=center>X</td>
    <td align=center>X</td>
    <td align=center>X</td>
@@ -2557,6 +2775,7 @@ section. Valid options can be taken from the following table:
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
+   <td><pre>&nbsp;</pre></td>
 </tr>
 <tr>
    <td><a name="match_size">match size</a></td>
@@ -2572,6 +2791,7 @@ section. Valid options can be taken from the following table:
    <td align=center>X</td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
+   <td><pre>&nbsp;</pre></td>
 </tr>
 <tr>
    <td><a name="silent_not_locked">silent not locked</a></td>
@@ -2579,6 +2799,7 @@ section. Valid options can be taken from the following table:
        without locking. The warn sign is changed to a debug sign.</td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
+   <td align=center>X</td>
    <td align=center>X</td>
    <td align=center>X</td>
    <td align=center>X</td>
@@ -2600,6 +2821,7 @@ section. Valid options can be taken from the following table:
    <td align=center>X</td>
    <td align=center>X</td>
    <td align=center>X</td>
+   <td align=center>X</td>
 </tr>
 <tr>
    <td><a name="file_name_is_subject">file name is subject</a></td>
@@ -2609,6 +2831,7 @@ section. Valid options can be taken from the following table:
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td align=center>X</td>
+   <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
@@ -2631,6 +2854,7 @@ section. Valid options can be taken from the following table:
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
+   <td><pre>&nbsp;</pre></td>
 </tr>
 <tr>
    <td><a name="file_name_is_target">file name is target[ &lt;rename rule name&gt;]</a></td>
@@ -2643,6 +2867,7 @@ section. Valid options can be taken from the following table:
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td align=center>X</td>
+   <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
@@ -2669,9 +2894,10 @@ section. Valid options can be taken from the following table:
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
+   <td><pre>&nbsp;</pre></td>
 </tr>
 <tr>
-   <td><a name="attach_file">attach file[ &ltrename rule name&gt;]</a></td>
+   <td><a name="attach_file">attach file[ &lt;rename rule name&gt;]</a></td>
    <td>With this option it is possible to attach a file to a mail.
        Each file will be attached to a separate mail (one file
        per mail).  The encoding will be done in BASE64 according to
@@ -2682,6 +2908,7 @@ section. Valid options can be taken from the following table:
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td align=center>X</td>
+   <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
@@ -2705,6 +2932,7 @@ section. Valid options can be taken from the following table:
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
+   <td><pre>&nbsp;</pre></td>
 </tr>
 <tr>
    <td><a name="show_all_group_members">show all group members</a></td>
@@ -2715,6 +2943,7 @@ section. Valid options can be taken from the following table:
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td align=center>X</td>
+   <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
@@ -2735,6 +2964,7 @@ section. Valid options can be taken from the following table:
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
+   <td><pre>&nbsp;</pre></td>
 </tr>
 <tr>
    <th width="30%">Option name</th>
@@ -2748,6 +2978,7 @@ section. Valid options can be taken from the following table:
    <th>sftp</th>
    <th>scp</th>
    <th>exec</th>
+   <th>http</th>
 </tr>
 <tr>
    <td><a name="subject_file">subject &lt;full path to subject file&gt;[ &lt;rename rule name&gt;]</a></td>
@@ -2759,6 +2990,7 @@ section. Valid options can be taken from the following table:
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td align=center>X</td>
+   <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
@@ -2811,6 +3043,7 @@ section. Valid options can be taken from the following table:
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
+   <td><pre>&nbsp;</pre></td>
 </tr>
 <tr>
    <td><a name="from">from &lt;mail address&gt;</a></td>
@@ -2824,6 +3057,7 @@ section. Valid options can be taken from the following table:
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td align=center>X</td>
+   <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
@@ -2847,6 +3081,7 @@ section. Valid options can be taken from the following table:
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
+   <td><pre>&nbsp;</pre></td>
 </tr>
 <tr>
    <td><a name="group-to">group-to &lt;mail address&gt;</a></td>
@@ -2856,6 +3091,7 @@ section. Valid options can be taken from the following table:
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td align=center>X</td>
+   <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
@@ -2871,6 +3107,7 @@ section. Valid options can be taken from the following table:
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td align=center>X</td>
+   <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
@@ -2906,6 +3143,7 @@ section. Valid options can be taken from the following table:
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
+   <td><pre>&nbsp;</pre></td>
 </tr>
 <tr>
    <td><a name="encode_ansi">encode ansi</a></td>
@@ -2916,6 +3154,7 @@ section. Valid options can be taken from the following table:
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td align=center>X</td>
+   <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
@@ -2934,6 +3173,7 @@ section. Valid options can be taken from the following table:
    <th>sftp</th>
    <th>scp</th>
    <th>exec</th>
+   <th>http</th>
 </tr>
 <tr>
    <td><a name="file_name_is_header">file name is header</a></td>
@@ -2949,6 +3189,7 @@ section. Valid options can be taken from the following table:
    <td align=center>X</td>
    <td align=center>X</td>
    <td><pre>&nbsp;</pre></td>
+   <td align=center>X</td>
 </tr>
 <tr>
    <td><a name="sequence_numbering">sequence numbering</a></td>
@@ -2959,6 +3200,7 @@ section. Valid options can be taken from the following table:
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td align=center>X</td>
+   <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
@@ -2980,6 +3222,7 @@ section. Valid options can be taken from the following table:
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
+   <td><pre>&nbsp;</pre></td>
 </tr>
 <tr>
    <td><a name="mode">mode &lt;active | passive&gt;</a></td>
@@ -2998,6 +3241,7 @@ section. Valid options can be taken from the following table:
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
+   <td><pre>&nbsp;</pre></td>
 </tr>
 <tr>
    <td><a name="login_site">login site &lt;command&gt;</a></td>
@@ -3005,6 +3249,7 @@ section. Valid options can be taken from the following table:
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td align=center>X</td>
+   <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
@@ -3025,6 +3270,7 @@ section. Valid options can be taken from the following table:
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
+   <td><pre>&nbsp;</pre></td>
 </tr>
 <tr>
    <td><a name="file_busy_rename">file busy rename &lt;character&gt;</a></td>
@@ -3034,6 +3280,7 @@ section. Valid options can be taken from the following table:
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td align=center>X</td>
+   <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
@@ -3147,6 +3394,7 @@ section. Valid options can be taken from the following table:
    <td align=center>X</td>
    <td align=center>X</td>
    <td align=center>X</td>
+   <td align=center>X</td>
 </tr>
 <tr>
    <td><a name="socket_send_buffer">socket send buffer &lt;buffer size&gt;</a></td>
@@ -3160,6 +3408,7 @@ section. Valid options can be taken from the following table:
    <td align=center>X</td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
+   <td align=center>X</td>
 </tr>
 <tr>
    <td><a name="socket_receive_buffer">socket receive buffer &lt;buffer size&gt;</a></td>
@@ -3173,6 +3422,7 @@ section. Valid options can be taken from the following table:
    <td align=center>X</td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
+   <td align=center>X</td>
 </tr>
 <tr>
    <td><a name="eumetsat">eumetsat &lt;DestEnvId&gt;</a></td>
@@ -3192,6 +3442,21 @@ section. Valid options can be taken from the following table:
    <td align=center>X</td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
+   <td><pre>&nbsp;</pre></td>
+</tr>
+<tr>
+   <td><a name="send_zero_size">send zero size</a></td>
+   <td>Do not send the content of the file.</td>
+   <td><pre>&nbsp;</pre></td>
+   <td><pre>&nbsp;</pre></td>
+   <td align=center>X</td>
+   <td><pre>&nbsp;</pre></td>
+   <td><pre>&nbsp;</pre></td>
+   <td align=center>X</td>
+   <td align=center>X</td>
+   <td align=center>X</td>
+   <td><pre>&nbsp;</pre></td>
+   <td align=center>X</td>
 </tr>
 <tr>
    <td><a name="restart">restart &lt;file&gt;</a></td>
@@ -3203,6 +3468,7 @@ section. Valid options can be taken from the following table:
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td align=center>X</td>
+   <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
    <td><pre>&nbsp;</pre></td>
 </tr>
@@ -3218,15 +3484,16 @@ section. Valid options can be taken from the following table:
    <th>sftp</th>
    <th>scp</th>
    <th>exec</th>
+   <th>http</th>
 </tr>
 </table>
 <hr size=3 noshade>
 <table width="100%">
 <tr>
    <td width="90%"><address><small>
-   Copyright &copy; 1997 - 2024 by H.Kiehl<br>
+   Copyright &copy; 1997 - 2025 by H.Kiehl<br>
    <a href="mailto:Holger.Kiehl@dwd.de?subject=AFD Homepage">Holger.Kiehl@dwd.de</a><br>
-   Last updated: 13.01.2024
+   Last updated: 26.02.2025
    </small></address></td>
    <td nowrap><small><img align=middle src="../images/reddot.gif" alt="[red dot]"><a href="contents.html">Index</a></small></td>
    <td nowrap><small><img align=middle src="../images/reddot.gif" alt="[red dot]"><a href="index.html">Home</a></small></td>

@@ -49,6 +49,7 @@ DESCR__S_M3
  **        create source dir[ <mode>]
  **        do not create source dir
  **        do not get dir list
+ **        get dir list[ yes|no|href]
  **        do not remove
  **        url creates file name
  **        url with index file name
@@ -69,6 +70,7 @@ DESCR__S_M3
  **        accept dot files
  **        inotify <value>                       [DEFAULT 0]
  **        one process just scaning
+ **        retrieve zero size
  **
  ** RETURN VALUES
  **   0 when no problems are found when evaluating the directory options.
@@ -111,6 +113,9 @@ DESCR__S_M3
  **                      and warnings directly when udc is called.
  **   29.10.2022 H.Kiehl Added "url with index file name" option.
  **   13.01.2024 H.Kiehl Extended 'store retrieve list' with 'once not exact'.
+ **   17.01.2024 H.Kiehl Extended 'store retrieve list' with 'not exact'.
+ **   30.03.2024 H.Kiehl Added "get dir list[ href]" option.
+ **   12.12.2024 H.Kiehl Added "retrieve zero size" option.
  **
  */
 DESCR__E_M3
@@ -187,6 +192,8 @@ extern struct dir_data *dd;
 #define NO_DELIMITER_FLAG                128
 #define KEEP_PATH_FLAG                   256
 #define URL_WITH_INDEX_FILE_NAME_FLAG    512
+#define GET_DIR_LIST_FLAG                1024
+#define DIR_ZERO_SIZE_FLAG               2048
 
 
 /*########################## eval_dir_options() #########################*/
@@ -246,7 +253,7 @@ eval_dir_options(int dir_pos, char type, char *dir_options, FILE *cmd_fp)
    dd[dir_pos].dup_check_timeout = 0L;
 #endif
    dd[dir_pos].accept_dot_files = NO;
-   dd[dir_pos].do_not_get_dir_list = NO;
+   dd[dir_pos].get_dir_list = YES;
    dd[dir_pos].url_creates_file_name = NO;
    dd[dir_pos].url_with_index_file_name = NO;
    dd[dir_pos].create_source_dir = NO;
@@ -266,6 +273,7 @@ eval_dir_options(int dir_pos, char type, char *dir_options, FILE *cmd_fp)
    dd[dir_pos].do_not_move = NO;
    dd[dir_pos].retrieve_work_dir[0] = '\0';
    dd[dir_pos].one_process_just_scaning = NO;
+   dd[dir_pos].dir_zero_size = NO;
 
    /*
     * Now for the new directory options.
@@ -709,14 +717,25 @@ eval_dir_options(int dir_pos, char type, char *dir_options, FILE *cmd_fp)
               {
                  ptr++;
               }
-              /* once */
-              if ((*ptr == 'o') && (*(ptr + 1) == 'n') &&
-                  (*(ptr + 2) == 'c') && (*(ptr + 3) == 'e') &&
-                  ((*(ptr + 4) == '\n') || (*(ptr + 4) == '\0')))
+              /* not exact */
+              if ((*ptr == 'n') && (*(ptr + 1) == 'o') &&
+                  (*(ptr + 2) == 't') && (*(ptr + 3) == ' ') &&
+                  (*(ptr + 4) == 'e') && (*(ptr + 5) == 'x') &&
+                  (*(ptr + 6) == 'a') && (*(ptr + 7) == 'c') &&
+                  (*(ptr + 8) == 't') &&
+                  ((*(ptr + 9) == '\n') || (*(ptr + 9) == '\0')))
               {
-                 dd[dir_pos].stupid_mode = GET_ONCE_ONLY;
-                 ptr += 4;
+                 dd[dir_pos].stupid_mode = NOT_EXACT;
+                 ptr += 9;
               }
+                   /* once */
+              else if ((*ptr == 'o') && (*(ptr + 1) == 'n') &&
+                       (*(ptr + 2) == 'c') && (*(ptr + 3) == 'e') &&
+                       ((*(ptr + 4) == '\n') || (*(ptr + 4) == '\0')))
+                   {
+                      dd[dir_pos].stupid_mode = GET_ONCE_ONLY;
+                      ptr += 4;
+                   }
                    /* once not exact */
               else if ((*ptr == 'o') && (*(ptr + 1) == 'n') &&
                        (*(ptr + 2) == 'c') && (*(ptr + 3) == 'e') &&
@@ -730,7 +749,7 @@ eval_dir_options(int dir_pos, char type, char *dir_options, FILE *cmd_fp)
                        ((*(ptr + 14) == '\n') || (*(ptr + 14) == '\0')))
                    {
                       dd[dir_pos].stupid_mode = GET_ONCE_NOT_EXACT;
-                      ptr += 4;
+                      ptr += 14;
                    }
                    /* append */
               else if ((*ptr == 'a') && (*(ptr + 1) == 'p') &&
@@ -985,7 +1004,51 @@ eval_dir_options(int dir_pos, char type, char *dir_options, FILE *cmd_fp)
               {
                  ptr++;
               }
-              dd[dir_pos].do_not_get_dir_list = YES;
+              dd[dir_pos].get_dir_list = NO;
+           }
+      else if (((used2 & GET_DIR_LIST_FLAG) == 0) &&
+               (strncmp(ptr, GET_DIR_LIST_ID, GET_DIR_LIST_ID_LENGTH) == 0))
+           {
+              used2 |= GET_DIR_LIST_FLAG;
+              ptr += GET_DIR_LIST_ID_LENGTH;
+              dd[dir_pos].in_dc_flag |= GET_DIR_LIST_IDC;
+              while ((*ptr == ' ') || (*ptr == '\t'))
+              {
+                 ptr++;
+              }
+              /* href */
+              if ((*ptr == 'h') && (*(ptr + 1) == 'r') &&
+                  (*(ptr + 2) == 'e') && (*(ptr + 3) == 'f') &&
+                  ((*(ptr + 4) == '\n') || (*(ptr + 4) == '\0')))
+              {
+                 dd[dir_pos].get_dir_list = FORCE_HREF;
+                 ptr += 4;
+              }
+                   /* YES|yes */
+              else if (((*ptr == 'Y') || (*ptr == 'y')) &&
+                       ((*(ptr + 1) == 'E') || (*(ptr + 1) == 'e')) &&
+                       ((*(ptr + 2) == 'S') || (*(ptr + 2) == 's')) &&
+                       ((*(ptr + 3) == '\n') || (*(ptr + 3) == '\0')))
+                   {
+                      dd[dir_pos].get_dir_list = YES;
+                      ptr += 3;
+                   }
+                   /* NO|no */
+              else if (((*ptr == 'N') || (*ptr == 'n')) &&
+                       ((*(ptr + 1) == 'O') || (*(ptr + 1) == 'o')) &&
+                       ((*(ptr + 2) == '\n') || (*(ptr + 2) == '\0')))
+                   {
+                      dd[dir_pos].get_dir_list = NO;
+                      ptr += 2;
+                   }
+                   else
+                   {
+                      dd[dir_pos].get_dir_list = YES;
+                   }
+              while ((*ptr != '\n') && (*ptr != '\0'))
+              {
+                 ptr++;
+              }
            }
       else if (((used2 & URL_CREATES_FILE_NAME_FLAG) == 0) &&
                (strncmp(ptr, URL_CREATES_FILE_NAME_ID, URL_CREATES_FILE_NAME_ID_LENGTH) == 0))
@@ -2029,6 +2092,17 @@ eval_dir_options(int dir_pos, char type, char *dir_options, FILE *cmd_fp)
                  ptr++;
               }
               dd[dir_pos].one_process_just_scaning = YES;
+           }
+      else if (((used2 & DIR_ZERO_SIZE_FLAG) == 0) &&
+               (strncmp(ptr, DIR_ZERO_SIZE_ID, DIR_ZERO_SIZE_ID_LENGTH) == 0))
+           {
+              used2 |= DIR_ZERO_SIZE_FLAG;
+              ptr += DIR_ZERO_SIZE_ID_LENGTH;
+              while ((*ptr != '\n') && (*ptr != '\0'))
+              {
+                 ptr++;
+              }
+              dd[dir_pos].dir_zero_size = YES;
            }
            else
            {

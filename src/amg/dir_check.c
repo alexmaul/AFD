@@ -1,6 +1,6 @@
 /*
  *  dir_check.c - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 1995 - 2023 Holger Kiehl <Holger.Kiehl@dwd.de>
+ *  Copyright (c) 1995 - 2025 Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -75,6 +75,8 @@ DESCR__S_M1
  **   18.09.2003 H.Kiehl Check if time goes backward.
  **   01.03.2008 H.Kiehl check_file_dir() is now performed by dir_check.
  **   01.02.2010 H.Kiehl Option to set system wide force reread interval.
+ **   08.03.2025 H.Kiehl MAX_CHECK_FILE_DIRS is configurable via AFD_CONFIG,
+ **                      show the value at startup.
  **
  */
 DESCR__E_M1
@@ -109,6 +111,9 @@ DESCR__E_M1
 #ifdef WITH_MEMCHECK
 # include <mcheck.h>
 #endif
+#if defined (LINUX) && defined (DIR_CHECK_CAP_CHOWN)
+# include <sys/capability.h>
+#endif
 #include <unistd.h>                /* fork(), rmdir(), getuid(),         */
                                    /* getgid(), sysconf()                */
 #include <dirent.h>                /* opendir(), closedir(), readdir(),  */
@@ -138,6 +143,9 @@ int                        afd_file_dir_length,
                            min_sched_priority = DEFAULT_MIN_NICE_VALUE,
 #endif
                            force_check = NO,
+#if defined (LINUX) && defined (DIR_CHECK_CAP_CHOWN)
+                           force_set_hardlinks_protected,
+#endif
                            fra_id,         /* ID of FRA.                 */
                            fra_fd = -1,    /* Needed by fra_attach().    */
                            fsa_id,         /* ID of FSA.                 */
@@ -200,7 +208,12 @@ int                        afd_file_dir_length,
                            sys_log_fd = STDERR_FILENO,
                            *time_job_list = NULL;
 unsigned int               default_age_limit,
-                           force_reread_interval;
+                           force_reread_interval,
+                           max_check_file_dirs;
+#ifdef LINUX
+unsigned int               copy_due_to_eperm = 0;
+u_off_t                    copy_due_to_eperm_size = 0;
+#endif
 mode_t                     default_create_source_dir_mode = 0;
 time_t                     default_exec_timeout;
 clock_t                    clktck;
@@ -215,9 +228,9 @@ pthread_mutex_t            fsa_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_t                  *thread;
 #else
 unsigned int               max_file_buffer;
-time_t                     *file_mtime_pool;
+time_t                     *file_mtime_pool = NULL;
 off_t                      *file_size_buffer = NULL,
-                           *file_size_pool;
+                           *file_size_pool = NULL;
 #endif
 #ifdef _POSIX_SAVED_IDS
 int                        no_of_sgids;
@@ -233,9 +246,6 @@ char                       *afd_file_dir,
                            **file_name_pool,
 #endif
                            first_time = YES,
-#ifdef LINUX
-                           hardlinks_protected = NEITHER,
-#endif
 #ifndef MULTI_FS_SUPPORT
                            outgoing_file_dir[MAX_PATH_LENGTH],
                            *p_time_dir_id,
@@ -246,6 +256,11 @@ char                       *afd_file_dir,
                            *rep_file = NULL;
 #ifndef _WITH_PTHREAD
 unsigned char              *file_length_pool;
+#endif
+#if defined (LINUX) && defined (DIR_CHECK_CAP_CHOWN)
+cap_t                       caps;
+int                         can_do_chown,
+                            hardlinks_protected_set;
 #endif
 struct dc_proc_list        *dcpl;      /* Dir Check Process List.*/
 struct directory_entry     *de;
@@ -558,6 +573,73 @@ main(int argc, char *argv[])
    have_hw_crc32 = detect_cpu_crc32();
 #endif
 
+#if defined (LINUX) && defined (DIR_CHECK_CAP_CHOWN)
+   /* Check if hardlinks are protected. */
+   hardlinks_protected_set = check_hardlinks_protected();
+   if (hardlinks_protected_set > 0)
+   {
+      system_log(DEBUG_SIGN, NULL, 0, "NOTE: Hardlinks are protected.");
+
+      /* Check if we can do chown. */
+      if ((caps = cap_get_proc()) == NULL)
+      {
+         can_do_chown = NO;
+         system_log(WARN_SIGN, __FILE__, __LINE__,
+                    "Failed to call cap_get_proc() : %s", strerror(errno));
+      }
+      else
+      {
+         cap_value_t cap_value[1];
+
+         /* Now lets try to set it. */
+         cap_value[0] = CAP_CHOWN;
+         cap_set_flag(caps, CAP_EFFECTIVE, 1, cap_value, CAP_SET);
+         if (cap_set_proc(caps) == -1)
+         {
+            can_do_chown = NO;
+            system_log(DEBUG_SIGN, NULL, 0, "      Cannot do chown.");
+            if (errno == EPERM)
+            {
+               system_log(DEBUG_SIGN, __FILE__, __LINE__,
+                          "cap_set_proc() failed. As root you need to 'setcap \"CAP_CHOWN+p\" %s'",
+                          DIR_CHECK);
+            }
+            else
+            {
+               system_log(WARN_SIGN, __FILE__, __LINE__,
+                          "cap_set_proc() failed : %s", strerror(errno));
+            }
+         }
+         else
+         {
+            /* Unset it. */
+            cap_value[0] = CAP_CHOWN;
+            cap_set_flag(caps, CAP_EFFECTIVE, 1, cap_value, CAP_CLEAR);
+            if (cap_set_proc(caps) == -1)
+            {
+               system_log(WARN_SIGN, __FILE__, __LINE__,
+                          "cap_set_proc() error, unable to clear capabilities : %s",
+                          strerror(errno));
+               can_do_chown = NO;
+            }
+            else
+            {
+               system_log(DEBUG_SIGN, NULL, 0, "      Can do chown. Verified.");
+               can_do_chown = NEITHER; /* Indicate that we must still set it. */
+            }
+         }
+      }
+   }
+   else if (hardlinks_protected_set == PERMANENT_INCORRECT)
+        {
+           can_do_chown = PERMANENT_INCORRECT;
+        }
+        else
+        {
+           can_do_chown = 4; /* Not needed. */
+        }
+#endif
+
    /* Tell user we are starting dir_check. */
    system_log(INFO_SIGN, NULL, 0, "Starting %s (%s)",
               DIR_CHECK, PACKAGE_VERSION);
@@ -606,6 +688,16 @@ main(int argc, char *argv[])
       }
    }
 #endif
+   if (max_check_file_dirs == 0)
+   {
+      system_log(DEBUG_SIGN, NULL, 0, "%s: MAX_CHECK_FILE_DIRS   : Disabled, always doing full check.",
+                 DC_PROC_NAME);
+   }
+   else
+   {
+      system_log(DEBUG_SIGN, NULL, 0, "%s: MAX_CHECK_FILE_DIRS   : %u",
+                 DC_PROC_NAME, max_check_file_dirs);
+   }
 
    /*
     * Before we start lets make sure that there are no old
@@ -648,11 +740,47 @@ main(int argc, char *argv[])
          {
             eval_bul_rep_config(bul_file, rep_file, YES);
          }
+
+#if defined (LINUX) && defined (DIR_CHECK_CAP_CHOWN)
+         if ((hardlinks_protected_set == 0) && (can_do_chown != NO))
+         {
+            /* Check if hardlinks are protected. */
+            hardlinks_protected_set = check_hardlinks_protected();
+            if (hardlinks_protected_set > 0)
+            {
+               /* Check if we can do chown. */
+               if ((caps = cap_get_proc()) == NULL)
+               {
+                  can_do_chown = NO;
+                  system_log(WARN_SIGN, __FILE__, __LINE__,
+                             "Failed to call cap_get_proc() : %s", strerror(errno));
+               }
+               else
+               {
+                  can_do_chown = NEITHER; /* Indicate that we must still set it. */
+               }
+            }
+         }
+#endif
          next_rename_rule_check_time = (now / READ_RULES_INTERVAL) *
                                        READ_RULES_INTERVAL + READ_RULES_INTERVAL;
       }
       if (now >= next_search_time)
       {
+#ifdef LINUX
+         if (copy_due_to_eperm > 0)
+         {
+            system_log(DEBUG_SIGN, NULL, 0,
+# if SIZEOF_OFF_T == 4
+                       "%u files copied [%lu bytes] due to link() receiving EPERM.",
+# else
+                       "%u files copied [%llu bytes] due to link() receiving EPERM.",
+# endif
+                       copy_due_to_eperm, (pri_off_t)copy_due_to_eperm_size);
+            copy_due_to_eperm = 0;
+            copy_due_to_eperm_size = 0;
+         }
+#endif
          while (get_one_zombie(-1, now) > 0)
          {
             /* Do nothing. */;
@@ -675,13 +803,14 @@ main(int argc, char *argv[])
          {
             if (ewl[i].dir_name != NULL)
             {
-               check_file_dir(time(NULL), ewl[i].dev,
+               check_file_dir(time(NULL), ewl[i].dev, force_check,
                               ewl[i].outgoing_file_dir,
                               ewl[i].outgoing_file_dir_length);
             }
          }
 #else
-         check_file_dir(now, outgoing_file_dir, outgoing_file_dir_length);
+         check_file_dir(now, force_check, outgoing_file_dir,
+                        outgoing_file_dir_length);
 #endif
          next_dir_check_time = ((time(&now) / DIR_CHECK_TIME) * DIR_CHECK_TIME) +
                                DIR_CHECK_TIME;
@@ -1903,6 +2032,17 @@ main(int argc, char *argv[])
 #endif
       }
    } /* for (;;) */
+
+#if defined (LINUX) && defined (DIR_CHECK_CAP_CHOWN)
+   if (caps)
+   {
+      if (cap_free(caps) == -1)
+      {
+         system_log(WARN_SIGN, __FILE__, __LINE__,
+                    "Failed to do cap_free() : %s", strerror(errno));
+      }
+   }
+#endif
 
    /* Unmap from pid array. */
    if (dcpl_fd > 0)
@@ -3710,8 +3850,11 @@ check_fifo(int read_fd, int write_fd)
 #endif
                (void)fprintf(stderr,
                              "%s terminated by fifo message %s.\n",
-                             DIR_CHECK,
-                             get_com_action_str((int)buffer[count]));
+                             DIR_CHECK, get_com_action_str((int)buffer[count]));
+               system_log(DEBUG_SIGN, NULL, 0,
+                          "%s got termination message %s. [%d subprocess active]",
+                          DIR_CHECK, get_com_action_str((int)buffer[count]),
+                          *no_of_process);
 #ifdef SHOW_EXEC_TIMES
                for (i = 0; i < no_fork_jobs; i++)
                {
@@ -4059,7 +4202,7 @@ terminate_subprocess(void)
       }
 
       system_log(INFO_SIGN, NULL, 0,
-                 "%s got termination message STOP, waiting for %d process to terminate.",
+                 "%s got termination message SHUTDOWN, waiting for %d process to terminate.",
                  DIR_CHECK, *no_of_process);
 
       for (i = 0; i < (max_shutdown_time - MIN_SHUTDOWN_TIME); i++)
@@ -4161,6 +4304,18 @@ sig_alarm(int signo)
 static void
 sig_exit(int signo)
 {
+#ifdef LINUX
+   if (copy_due_to_eperm > 0)
+   {
+      system_log(DEBUG_SIGN, NULL, 0,
+# if SIZEOF_OFF_T == 4
+                 "%u files copied [%lu bytes] due to link() receiving EPERM.",
+# else
+                 "%u files copied [%llu bytes] due to link() receiving EPERM.",
+# endif
+                 copy_due_to_eperm, (pri_off_t)copy_due_to_eperm_size);
+   }
+#endif
    terminate_subprocess();
 
    (void)fprintf(stderr,

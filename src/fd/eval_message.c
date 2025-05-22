@@ -1,6 +1,6 @@
 /*
  *  eval_message.c - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 1995 - 2023 Deutscher Wetterdienst (DWD),
+ *  Copyright (c) 1995 - 2025 Deutscher Wetterdienst (DWD),
  *                            Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
@@ -96,6 +96,9 @@ DESCR__S_M3
  **   22.06.2020 H.Kiehl Added option 'show no to line'.
  **   29.06.2020 H.Kiehl Added option 'group-to'.
  **   29.06.2023 H.Kiehl Ignore FD option 'ageing'.
+ **   14.12.2024 H.Kiehl Added option 'send zero size'.
+ **   10.03.2025 h.Kiehl When 'ulock OFF' is set, we should still do
+ **                      the unique locking.
  **
  */
 DESCR__E_M3
@@ -187,7 +190,8 @@ static char *store_mail_address(char *, char **, char *, unsigned int);
 #define GROUP_TO_FLAG               4096
 #define REMOTE_HARDLINK_FLAG        8192
 #define REMOTE_SYMLINK_FLAG         16384
-
+#define SEND_ZERO_SIZE_FLAG         32768
+#define NAME2DIR_FLAG               65536
 
 #define MAX_HUNK                    4096
 
@@ -531,7 +535,6 @@ eval_message(char *message_name, struct job *p_db)
                     else if (CHECK_STRCMP(ptr, LOCK_OFF) == 0)
                          {
                             p_db->lock = OFF;
-                            p_db->special_flag &= ~UNIQUE_LOCKING;
                          }
 #ifdef WITH_READY_FILES
                     else if (CHECK_STRCMP(ptr, LOCK_READY_A_FILE) == 0)
@@ -564,6 +567,26 @@ eval_message(char *message_name, struct job *p_db)
                          }
                     *end_ptr = byte_buf;
                     ptr = end_ptr;
+                    while ((*ptr != '\n') && (*ptr != '\0'))
+                    {
+                       ptr++;
+                    }
+                    while (*ptr == '\n')
+                    {
+                       ptr++;
+                    }
+                 }
+            else if (((used2 & NAME2DIR_FLAG) == 0) &&
+                     (CHECK_STRNCMP(ptr, NAME2DIR_ID, NAME2DIR_ID_LENGTH) == 0))
+                 {
+                    used2 |= NAME2DIR_FLAG;
+                    ptr += NAME2DIR_ID_LENGTH;
+                    while ((*ptr == ' ') || (*ptr == '\t'))
+                    {
+                       ptr++;
+                    }
+                    p_db->name2dir_char = *ptr;
+                    ptr++;
                     while ((*ptr != '\n') && (*ptr != '\0'))
                     {
                        ptr++;
@@ -3032,6 +3055,22 @@ eval_message(char *message_name, struct job *p_db)
                  {
                     /* This option is for process FD, so ignore it. */
                     ptr += AGEING_ID_LENGTH;
+                    while ((*ptr != '\n') && (*ptr != '\0'))
+                    {
+                       ptr++;
+                    }
+                    while (*ptr == '\n')
+                    {
+                       ptr++;
+                    }
+                 }
+            else if (((used2 & SEND_ZERO_SIZE_FLAG) == 0) &&
+                     (CHECK_STRNCMP(ptr, SEND_ZERO_SIZE_ID,
+                                    SEND_ZERO_SIZE_ID_LENGTH) == 0))
+                 {
+                    used2 |= SEND_ZERO_SIZE_FLAG;
+                    p_db->special_flag |= SEND_ZERO_SIZE;
+                    ptr += SEND_ZERO_SIZE_ID_LENGTH;
                     while ((*ptr != '\n') && (*ptr != '\0'))
                     {
                        ptr++;

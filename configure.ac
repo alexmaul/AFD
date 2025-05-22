@@ -1,6 +1,6 @@
 dnl Process this file with autoconf to produce a configure script.
 AC_PREREQ([2.59])
-AC_INIT([afd],[1.4.13],[Holger.Kiehl@dwd.de])
+AC_INIT([afd],[1.4.16],[Holger.Kiehl@dwd.de])
 AC_CONFIG_SRCDIR(src/init_afd/afd.c)
 AC_CONFIG_AUX_DIR(ac-tools)
 dnl# AC_PREFIX_DEFAULT("/usr/local/afd")
@@ -499,8 +499,10 @@ AC_ARG_ENABLE([ssl],
           ssl_all_roots="/usr/local/ssl /usr/lib/ssl /usr/ssl /usr/pkg /usr/local /usr /opt"
        fi
        with_ssl="yes"
+       AM_CONDITIONAL(WITH_SSL_SUPPORT, true)
     else
        with_ssl="no"
+       AM_CONDITIONAL(WITH_SSL_SUPPORT, false)
     fi],
    [if test x$enableval != xyes
     then
@@ -508,7 +510,8 @@ AC_ARG_ENABLE([ssl],
     else
        ssl_all_roots="/usr/local/ssl /usr/lib/ssl /usr/ssl /usr/pkg /usr/local /usr /opt"
     fi
-    with_ssl="yes"])
+    with_ssl="yes"]
+    AM_CONDITIONAL(WITH_SSL_SUPPORT, true))
 
 AC_ARG_WITH(ssl-includes,
    [  --with-ssl-includes=DIR         location where TLS/SSL includes are],
@@ -586,6 +589,42 @@ else
    WITH_AFD_MON_SPEC=1
 fi
 AC_SUBST(WITH_AFD_MON_SPEC)
+
+dnl **** check if we want chown capability for dir_check
+dir_check_cap_chown=false
+AC_ARG_ENABLE(dir_check_cap_chown,
+   [  --enable-dir_check_cap_chown    enable chown capability for dir_check],
+   [case "${enableval}" in
+      yes) dir_check_cap_chown=true
+           AC_DEFINE([DIR_CHECK_CAP_CHOWN], [], [With chown capability for dir_check]) ;;
+      no)  dir_check_cap_chown=false;;
+      *) AC_MSG_ERROR(bad value ${enableval} for --enable-dir_check_cap_chown) ;;
+   esac
+   ac_cv_dir_check_cap_chown="$enableval"],[dir_check_cap_chown=false;ac_cv_dir_check_cap_chown="no"])
+if test "$dir_check_cap_chown" = "false"
+then
+   WITH_DIR_CHECK_CAP_CHOWN=0
+   AFD_CAP_LIB=""
+   AM_CONDITIONAL(WITH_HARDLINKS_PROTECTED_CHECK, false)
+else
+   have_libcap="no"
+   AC_CHECK_LIB([cap], [cap_get_proc, cap_set_proc], [have_libcap="yes"])
+   if test "$have_libcap" = "no"
+   then
+      AC_MSG_ERROR([capability lib missing, please install libcap and/or libcap-devel])
+   fi
+   have_headercap="no"
+   AC_CHECK_HEADER([sys/capability.h], [have_headercap="yes"])
+   if test "$have_headercap" = "no"
+   then
+      AC_MSG_ERROR([cpability header missing, please install libcap-devel])
+   fi
+   AFD_CAP_LIB="-lcap"
+   WITH_DIR_CHECK_CAP_CHOWN=1
+   AM_CONDITIONAL(WITH_HARDLINKS_PROTECTED_CHECK, true)
+fi
+AC_SUBST(AFD_CAP_LIB)
+AC_SUBST(WITH_DIR_CHECK_CAP_CHOWN)
 
 dnl **** check if user wants to compile with debugging support
 AC_ARG_ENABLE(compiler_debug,
@@ -1069,16 +1108,16 @@ if test "${compiler_debug}" = "true"
 then
    if test "x${GCC}" = "xyes"
    then
-     DEBUG_FLAG="-ggdb3"
+      DEBUG_FLAG="-ggdb3"
    else
-     case "${host}" in
-        alpha*-dec-osf4.*)       DEBUG_FLAG="-g3" ;;
-        hppa*-hp-hpux*)          DEBUG_FLAG="-g" ;;
-        mips-sgi-irix6.[[4-9]]*) DEBUG_FLAG="-g3" ;;
-        mips-sgi-irix*)          DEBUG_FLAG="-g" ;;
-        rs6000-ibm-aix*)         DEBUG_FLAG="-g" ;;
-        *)                       DEBUG_FLAG="-g" ;;
-     esac
+      case "${host}" in
+         alpha*-dec-osf4.*)       DEBUG_FLAG="-g3" ;;
+         hppa*-hp-hpux*)          DEBUG_FLAG="-g" ;;
+         mips-sgi-irix6.[[4-9]]*) DEBUG_FLAG="-g3" ;;
+         mips-sgi-irix*)          DEBUG_FLAG="-g" ;;
+         rs6000-ibm-aix*)         DEBUG_FLAG="-g" ;;
+         *)                       DEBUG_FLAG="-g" ;;
+      esac
    fi
 else
    DEBUG_FLAG=""
@@ -1235,6 +1274,10 @@ then
       CFLAGS="$CFLAGS -Wno-format-y2k -Wno-restrict"
    fi
 fi
+if test "x${GCC}" = "xyes"
+then
+   AX_CHECK_COMPILE_FLAG("-Wstringop-overflow", [CFLAGS="${CFLAGS} -Wstringop-overflow"], [CFLAGS="${CFLAGS}"])
+fi
 
 dnl Some programs with suid
 if test "$ac_cv_setuid_progs" = yes
@@ -1307,40 +1350,45 @@ then
       AC_SUBST(AFD_SSL_LIBS)
       AC_DEFINE([WITH_SSL], [], [with TLS/SSL support])
 
-      dnl Version check taken from openssh package and modified it.
-      savedLIBS="$LIBS"
-      savedCPPFLAGS="$CPPFLAGS"
-      LIBS="$LIBS $AFD_SSL_LIBS"
-      CPPFLAGS="$CPPFLAGS $AFD_SSL_INCLUDES"
-      AC_MSG_CHECKING([correct OpenSSL version])
-      AC_RUN_IFELSE([AC_LANG_SOURCE([[
-                    #include <stdio.h>
-                    #include <string.h>
-                    #include <openssl/opensslv.h>
-                    #include <openssl/crypto.h>
-                    #include <openssl/ssl.h>
-                    #define DATA "conftest.ssllibver"
-                    int main(void)
-                    {
-                       FILE *fd;
-
-                       if ((fd = fopen(DATA,"w")) != NULL)
+      if test "$cross_compiling" = no
+      then
+         dnl Version check taken from openssh package and modified it.
+         savedLIBS="$LIBS"
+         savedCPPFLAGS="$CPPFLAGS"
+         LIBS="$LIBS $AFD_SSL_LIBS"
+         CPPFLAGS="$CPPFLAGS $AFD_SSL_INCLUDES"
+         AC_MSG_CHECKING([OpenSSL version])
+         AC_RUN_IFELSE([AC_LANG_SOURCE([[
+                       #include <stdio.h>
+                       #include <string.h>
+                       #include <openssl/opensslv.h>
+                       #include <openssl/crypto.h>
+                       #include <openssl/ssl.h>
+                       #define DATA "conftest.ssllibver"
+                       int main(void)
                        {
-                          if (fprintf(fd ,"%x (%s)\n", SSLeay(), SSLeay_version(SSLEAY_VERSION)) >= 0)
-                          {
-                             SSL_CTX *ssl_ctx;
+                          FILE *fd;
 
-                             SSLeay_add_ssl_algorithms();
-                             ssl_ctx=(SSL_CTX *)SSL_CTX_new(SSLv23_method());
-                             SSL_CTX_set_options(ssl_ctx, SSL_OP_ALL);
-                             SSL_CTX_set_mode(ssl_ctx, SSL_MODE_AUTO_RETRY);
-                             exit(0);
+                          if ((fd = fopen(DATA,"w")) != NULL)
+                          {
+                             if (fprintf(fd ,"%x (%s)\n", SSLeay(), SSLeay_version(SSLEAY_VERSION)) >= 0)
+                             {
+                                SSL_CTX *ssl_ctx;
+
+                                SSLeay_add_ssl_algorithms();
+                                ssl_ctx=(SSL_CTX *)SSL_CTX_new(SSLv23_method());
+                                SSL_CTX_set_options(ssl_ctx, SSL_OP_ALL);
+                                SSL_CTX_set_mode(ssl_ctx, SSL_MODE_AUTO_RETRY);
+                                exit(0);
+                             }
                           }
-                       }
-                       exit(1);
-                    }]])],[ssl_library_ver=`cat conftest.ssllibver`
-                  AC_MSG_RESULT(yes $ssl_library_ver)],[AC_MSG_RESULT(incorrect not found)
-                  AC_MSG_ERROR(incorect OpenSSL library or not found.)],[])
+                          exit(1);
+                       }]])],[ssl_library_ver=`cat conftest.ssllibver`
+                     AC_MSG_RESULT(yes $ssl_library_ver)],[AC_MSG_RESULT(incorrect not found)
+                     AC_MSG_ERROR(incorect OpenSSL library or not found.)],[])
+      else
+         ssl_library_ver="unknown version"
+      fi
       AC_CHECK_FUNC([TLS_client_method],
                     [AM_CONDITIONAL(HAVE_TLS_CLIENT_METHOD, true)
                      AC_DEFINE([HAVE_TLS_CLIENT_METHOD], [], [With TLS_client_method support])],
@@ -1375,10 +1423,14 @@ then
       AC_MSG_RESULT(no)
       AM_CONDITIONAL(HAVE_TLS_CLIENT_METHOD, false)
       AM_CONDITIONAL(HAVE_TLS_SERVER_METHOD, false)
+      AM_CONDITIONAL(HAVE_EVP_SHA256, false)
+      AM_CONDITIONAL(HAVE_EVP_SHA512_256, false)
    fi
 else
    AM_CONDITIONAL(HAVE_TLS_CLIENT_METHOD, false)
    AM_CONDITIONAL(HAVE_TLS_SERVER_METHOD, false)
+   AM_CONDITIONAL(HAVE_EVP_SHA256, false)
+   AM_CONDITIONAL(HAVE_EVP_SHA512_256, false)
 fi
 
 no_x=""
@@ -1707,9 +1759,12 @@ AC_FUNC_STRFTIME
 AC_FUNC_UTIME_NULL
 AC_FUNC_VPRINTF
 
-AC_CONFIG_LIBOBJ_DIR([src/init_afd/ports])
-HW_FUNC_VSNPRINTF
-HW_FUNC_SNPRINTF
+if test "$cross_compiling" = no
+then
+   AC_CONFIG_LIBOBJ_DIR([src/init_afd/ports])
+   HW_FUNC_VSNPRINTF
+   HW_FUNC_SNPRINTF
+fi
 
 dnl There is no "standard" pty allocation method. Every system is different.
 dnl The following was taken from the xemacs package and modified for AFD.
@@ -1751,10 +1806,10 @@ AC_CHECK_FUNC([mmap],
               [AM_CONDITIONAL(WITHOUT_MMAP, false)
                AC_DEFINE([HAVE_MMAP], [], [With mmap support])],
               [AM_CONDITIONAL(WITHOUT_MMAP, true)])
-AC_CHECK_FUNCS(fdatasync gai_strerror getline getaddrinfo gethostname memcpy\
-               mkdir mkfifo mktime rmdir select setpriority seteuid setreuid\
-               socket strcasestr strerror strtod strtol strtoll strtoul\
-               strtoull unsetenv statx)
+AC_CHECK_FUNCS(fdatasync gai_strerror getline getaddrinfo gethostid\
+               gethostname memcpy mkdir mkfifo mktime rmdir select\
+               setpriority seteuid setreuid socket strcasestr strerror\
+               strtod strtol strtoll strtoul strtoull unsetenv statx)
 
 AM_GNU_GETTEXT([external])
 if test "x$LIBINTL" != "x"
@@ -1763,7 +1818,18 @@ then
 fi
 
 dnl Check for zoneinfo information
-AX_ZONEINFO()
+if test "$cross_compiling" = yes
+then
+   AC_ARG_WITH(tzdir,
+               [  --with-tzdir=DIR         location of system timezone files],
+               tzdir_path="$withval")
+   if test "x$tzdir_path" != "x"
+   then
+      AC_DEFINE_UNQUOTED([TZDIR], ["$tzdir_path"], [Set TZDIR location])
+   fi
+else
+   AX_ZONEINFO()
+fi
 
 AC_CONFIG_FILES([Makefile
 po/Makefile.in
@@ -1832,6 +1898,7 @@ echo "    Max directory alias name length  : ${with_max_dir_alias_length}"
 echo "    Max recipient length             : ${with_max_recipient_length}"
 echo "    Some binaries with setuid flag   : ${ac_cv_setuid_progs}"
 echo "    Group can write                  : ${ac_cv_group_can_write}"
+echo "    dir_check has chown capability   : ${ac_cv_dir_check_cap_chown}"
 echo "    Automatically create configs     : ${ac_cv_auto_create_config}"
 echo "    Enable Distro-style RPMs         : ${enable_distro_rpm}"
 if test "$DISTRO" != ""

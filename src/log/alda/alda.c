@@ -1,6 +1,6 @@
 /*
  *  alda.c - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 2007 - 2023 Holger Kiehl <Holger.Kiehl@dwd.de>
+ *  Copyright (c) 2007 - 2025 Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -64,6 +64,7 @@ unsigned int               end_alias_counter,
                            end_id_counter,
                            end_name_counter,
                            file_pattern_counter,
+                           header_line_shown = NO,
                            mode,
 #ifdef WITH_AFD_MON
                            msa_fd = -1,
@@ -104,6 +105,7 @@ int                        data_printed,
                            log_date_length = LOG_DATE_LENGTH,
                            max_hostname_length = MAX_HOSTNAME_LENGTH,
                            no_of_dirs = 0,
+                           no_of_header_lines = 0,
                            no_of_hosts = 0,
                            rotate_limit,
                            *search_afd_msa_pos = NULL,
@@ -136,6 +138,7 @@ char                       **end_alias,
                            footer_filename[MAX_PATH_LENGTH],
                            *format_str = NULL,
                            header_filename[MAX_PATH_LENGTH],
+                           **header_line = NULL,
                            output_filename[MAX_PATH_LENGTH],
                            *p_work_dir,
                            **search_afd_start_alias = NULL,
@@ -798,6 +801,7 @@ main(int argc, char *argv[])
                      }
                   }
                }
+               header_line_shown = NO;
                if ((output_fp = fopen(output_filename, "a")) == NULL)
                {
                   (void)fprintf(stderr, "Failed to fopen() `%s' : %s (%s %d)\n",
@@ -815,6 +819,19 @@ main(int argc, char *argv[])
    if (verbose)
    {
       end = time(NULL);
+   }
+
+   if (header_line != NULL)
+   {
+      int j;
+
+      for (j = 0; j < no_of_header_lines; j++)
+      {
+         free(header_line[j]);
+      }
+      free(header_line);
+      header_line = NULL;
+      no_of_header_lines = 0;
    }
 
    if (verbose)

@@ -1,6 +1,6 @@
 /*
  *  fra_view.c - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 2000 - 2024 Holger Kiehl <Holger.Kiehl@dwd.de>
+ *  Copyright (c) 2000 - 2025 Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -52,6 +52,7 @@ DESCR__S_M1
  **   26.01.2019 H.Kiehl Added dir_time.
  **   22.07.2019 H.Kiehl Added posibility to specify as search value
  **                      the dir-id.
+ **   02.04.2024 H.Kiehl Added GET_DIR_LIST_HREF.
  **
  */
 DESCR__E_M1
@@ -160,7 +161,7 @@ main(int argc, char *argv[])
          }
          else
          {
-            (void)my_strlcpy(dir_alias, argv[1], MAX_DIR_ALIAS_LENGTH);
+            (void)my_strlcpy(dir_alias, argv[1], MAX_DIR_ALIAS_LENGTH + 1);
          }
       }
    }
@@ -510,6 +511,10 @@ main(int argc, char *argv[])
             {
                (void)fprintf(stdout, "ACCEPT_DOT_FILES ");
             }
+            if (fra[i].dir_options & GET_DIR_LIST_HREF)
+            {
+               (void)fprintf(stdout, "GET_DIR_LIST_HREF ");
+            }
             if (fra[i].dir_options & DONT_GET_DIR_LIST)
             {
                (void)fprintf(stdout, "DONT_GET_DIR_LIST ");
@@ -563,6 +568,10 @@ main(int argc, char *argv[])
             if (fra[i].dir_options & ONE_PROCESS_JUST_SCANNING)
             {
                (void)fprintf(stdout, "ONE_PROCESS_JUST_SCANNING ");
+            }
+            if (fra[i].dir_options & DIR_ZERO_SIZE)
+            {
+               (void)fprintf(stdout, "DIR_ZERO_SIZE ");
             }
             (void)fprintf(stdout, "\n");
          }
@@ -642,6 +651,10 @@ main(int argc, char *argv[])
             if (fra[i].in_dc_flag & CREATE_SRC_DIR_IDC)
             {
                (void)fprintf(stdout, "CREATE_SRC_DIR ");
+            }
+            if (fra[i].in_dc_flag & GET_DIR_LIST_IDC)
+            {
+               (void)fprintf(stdout, "GET_DIR_LIST ");
             }
             (void)fprintf(stdout, "\n");
          }
@@ -743,6 +756,10 @@ main(int argc, char *argv[])
          {
             (void)fprintf(stdout, "Stupid mode          : NO\n");
          }
+         else if (fra[i].stupid_mode == NOT_EXACT)
+              {
+                 (void)fprintf(stdout, "Stupid mode          : NOT_EXACT\n");
+              }
          else if (fra[i].stupid_mode == GET_ONCE_ONLY)
               {
                  (void)fprintf(stdout, "Stupid mode          : GET_ONCE_ONLY\n");

@@ -1,6 +1,6 @@
 /*
  *  afddefs.h - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 1996 - 2024 Deutscher Wetterdienst (DWD),
+ *  Copyright (c) 1996 - 2025 Deutscher Wetterdienst (DWD),
  *                            Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
@@ -369,7 +369,9 @@ typedef unsigned long       u_long_64;
 #define AFD_CTRL                   "afd_ctrl"
 #define AFD_CTRL_LENGTH            (sizeof(AFD_CTRL) - 1)
 #define AFDD                       "afdd"
-#define AFDDS                      "afdds"
+#ifdef WITH_SSL
+# define AFDDS                     "afdds"
+#endif
 #ifdef _WITH_ATPD_SUPPORT
 # define ATPD                      "atpd"
 #endif
@@ -469,11 +471,12 @@ typedef unsigned long       u_long_64;
 # define DEL_OLD_LOCKED_FILE_GLOB   26
 # define DEL_OLD_RLOCKED_FILE_GLOB  27
 # define DEL_QUEUED_FILE_GLOB       28
-# define MAX_DELETE_REASONS         28
+# define DEL_OLD_ILOCKED_FILE_GLOB  29
+# define MAX_DELETE_REASONS         29
 # define UKN_DEL_REASON_STR         "Unknown delete reason"
 # define UKN_DEL_REASON_STR_LENGTH  (sizeof(UKN_DEL_REASON_STR) - 1)
 /* NOTE: Only 4096 (0 - fff) may be defined here. */
-#define MAX_DELETE_REASON_LENGTH    (sizeof("Delete old locked file remote (AFD_CONFIG)") - 1)
+#define MAX_DELETE_REASON_LENGTH    (sizeof("Delete old locked file incoming (AFD_CONFIG)") - 1)
 /* Check dr_str.h! */
 #endif
 
@@ -498,43 +501,31 @@ typedef unsigned long       u_long_64;
 #define AW_LOCK_ID                 4    /* Archive watch                */
 #define AS_LOCK_ID                 5    /* AFD statistics               */
 #define AFDD_LOCK_ID               6    /* AFD TCP Daemon               */
-#define AFDDS_LOCK_ID              7    /* AFD TLS TCP Daemon           */
-#ifdef _WITH_ATPD_SUPPORT
-# define ATPD_LOCK_ID              8    /* AFD Transfer Protocol Daemon */
-# ifdef _WITH_WMOD_SUPPORT
-#  define WMOD_LOCK_ID             9    /* WMO protocol Daemon          */
-#  ifdef _WITH_DE_MAIL_SUPPORT
-#   define DEMCD_LOCK_ID           10   /* De Mail Confirmation Daemon  */
-#   define NO_OF_LOCK_PROC         11
-#  else
-#   define NO_OF_LOCK_PROC         10
-#  endif
-# else
-#  ifdef _WITH_DE_MAIL_SUPPORT
-#   define DEMCD_LOCK_ID           9    /* De Mail Confirmation Daemon  */
-#   define NO_OF_LOCK_PROC         10
-#  else
-#   define NO_OF_LOCK_PROC         9
-#  endif
-# endif
+#ifdef WITH_SSL
+# define AFDDS_LOCK_OFFSET         1
+# define AFDDS_LOCK_ID             (AFDD_LOCK_ID + AFDDS_LOCK_OFFSET) /* AFD TLS TCP Daemon */
 #else
-# ifdef _WITH_WMOD_SUPPORT
-#  define WMOD_LOCK_ID             8    /* WMO protocol Daemon          */
-#  ifdef _WITH_DE_MAIL_SUPPORT
-#   define DEMCD_LOCK_ID           9    /* De Mail Confirmation Daemon  */
-#   define NO_OF_LOCK_PROC         10
-#  else
-#   define NO_OF_LOCK_PROC         9
-#  endif
-# else
-#  ifdef _WITH_DE_MAIL_SUPPORT
-#   define DEMCD_LOCK_ID           8    /* De Mail Confirmation Daemon  */
-#   define NO_OF_LOCK_PROC         9
-#  else
-#   define NO_OF_LOCK_PROC         8
-#  endif
-# endif
+# define AFDDS_LOCK_OFFSET         0
 #endif
+#ifdef _WITH_ATPD_SUPPORT
+# define ATPD_LOCK_OFFSET          1
+# define ATPD_LOCK_ID              (AFDD_LOCK_ID + AFDDS_LOCK_OFFSET + ATPD_LOCK_OFFSET) /* AFD Transfer Protocol Daemon */
+#else
+# define ATPD_LOCK_OFFSET          0
+#endif
+#ifdef _WITH_WMOD_SUPPORT
+# define WMOD_LOCK_OFFSET          1
+# define WMOD_LOCK_ID              (AFDD_LOCK_ID + AFDDS_LOCK_OFFSET + ATPD_LOCK_OFFSET + WMOD_LOCK_OFFSET) /* WMO protocol Daemon */
+#else
+# define WMOD_LOCK_OFFSET          0
+#endif
+#ifdef _WITH_DE_MAIL_SUPPORT
+# define DEMCD_LOCK_OFFSET         1
+# define DEMCD_LOCK_ID             (AFDD_LOCK_ID + AFDDS_LOCK_OFFSET + ATPD_LOCK_OFFSET + WMOD_LOCK_OFFSET + DEMCD_LOCK_OFFSET) /* De Mail Confirmation Daemon */
+#else
+# define DEMCD_LOCK_OFFSET         0
+#endif
+#define NO_OF_LOCK_PROC            (AFDD_LOCK_ID + AFDDS_LOCK_OFFSET + ATPD_LOCK_OFFSET + WMOD_LOCK_OFFSET + DEMCD_LOCK_OFFSET + 1)
 
 /* Commands that can be send to DB_UPDATE_FIFO of the AMG. */
 #define HOST_CONFIG_UPDATE          4
@@ -594,22 +585,27 @@ typedef unsigned long       u_long_64;
 #define STAT_NO                    8
 #define DC_NO                      9
 #define AFDD_NO                    10
-#define AFDDS_NO                   11
+#ifdef WITH_SSL
+# define AFDDS_OFFSET              1
+# define AFDDS_NO                  (AFDD_NO + AFDDS_OFFSET)
+#else
+# define AFDDS_OFFSET              0
+#endif
 #ifdef _WITH_ATPD_SUPPORT
 # define ATPD_OFFSET               1
-# define ATPD_NO                   (AFDDS_NO + ATPD_OFFSET)
+# define ATPD_NO                   (AFDD_NO + AFDDS_OFFSET + ATPD_OFFSET)
 #else
 # define ATPD_OFFSET               0
 #endif
 #ifdef _WITH_WMOD_SUPPORT
 # define WMOD_OFFSET               1
-# define WMOD_NO                   (AFDDS_NO + ATPD_OFFSET + WMOD_OFFSET)
+# define WMOD_NO                   (AFDD_NO + AFDDS_OFFSET + ATPD_OFFSET + WMOD_OFFSET)
 #else
 # define WMOD_OFFSET               0
 #endif
 #ifdef _WITH_DE_MAIL_SUPPORT
 # define DEMCD_OFFSET              1
-# define DEMCD_NO                  (AFDDS_NO + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET)
+# define DEMCD_NO                  (AFDD_NO + AFDDS_OFFSET + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET)
 #else
 # define DEMCD_OFFSET              0
 #endif
@@ -617,59 +613,59 @@ typedef unsigned long       u_long_64;
 # define MAPPER_OFFSET             0
 #else
 # define MAPPER_OFFSET             1
-# define MAPPER_NO                 (AFDDS_NO + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET)
+# define MAPPER_NO                 (AFDD_NO + AFDDS_OFFSET + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET)
 #endif
 #ifdef _INPUT_LOG
 # define INPUT_OFFSET              1
-# define INPUT_LOG_NO              (AFDDS_NO + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET + INPUT_OFFSET)
+# define INPUT_LOG_NO              (AFDD_NO + AFDDS_OFFSET + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET + INPUT_OFFSET)
 #else
 # define INPUT_OFFSET              0
 #endif
 #ifdef _OUTPUT_LOG
 # define OUTPUT_OFFSET             1
-# define OUTPUT_LOG_NO             (AFDDS_NO + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET + INPUT_OFFSET + OUTPUT_OFFSET)
+# define OUTPUT_LOG_NO             (AFDD_NO + AFDDS_OFFSET + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET + INPUT_OFFSET + OUTPUT_OFFSET)
 #else
 # define OUTPUT_OFFSET             0
 #endif
 #ifdef _CONFIRMATION_LOG
 # define CONFIRMATION_OFFSET       1
-# define CONFIRMATION_LOG_NO       (AFDDS_NO + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET + INPUT_OFFSET + OUTPUT_OFFSET + CONFIRMATION_OFFSET)
+# define CONFIRMATION_LOG_NO       (AFDD_NO + AFDDS_OFFSET + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET + INPUT_OFFSET + OUTPUT_OFFSET + CONFIRMATION_OFFSET)
 #else
 # define CONFIRMATION_OFFSET       0
 #endif
 #ifdef _DELETE_LOG
 # define DELETE_OFFSET             1
-# define DELETE_LOG_NO             (AFDDS_NO + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET + INPUT_OFFSET + OUTPUT_OFFSET + CONFIRMATION_OFFSET + DELETE_OFFSET)
+# define DELETE_LOG_NO             (AFDD_NO + AFDDS_OFFSET + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET + INPUT_OFFSET + OUTPUT_OFFSET + CONFIRMATION_OFFSET + DELETE_OFFSET)
 #else
 # define DELETE_OFFSET             0
 #endif
 #ifdef _PRODUCTION_LOG
 # define PRODUCTION_OFFSET         1
-# define PRODUCTION_LOG_NO         (AFDDS_NO + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET + INPUT_OFFSET + OUTPUT_OFFSET + CONFIRMATION_OFFSET + DELETE_OFFSET + PRODUCTION_OFFSET)
+# define PRODUCTION_LOG_NO         (AFDD_NO + AFDDS_OFFSET + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET + INPUT_OFFSET + OUTPUT_OFFSET + CONFIRMATION_OFFSET + DELETE_OFFSET + PRODUCTION_OFFSET)
 #else
 # define PRODUCTION_OFFSET         0
 #endif
 #ifdef _DISTRIBUTION_LOG
 # define DISTRIBUTION_OFFSET       1
-# define DISTRIBUTION_LOG_NO       (AFDDS_NO + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET + INPUT_OFFSET + OUTPUT_OFFSET + CONFIRMATION_OFFSET + DELETE_OFFSET + PRODUCTION_OFFSET + DISTRIBUTION_OFFSET)
+# define DISTRIBUTION_LOG_NO       (AFDD_NO + AFDDS_OFFSET + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET + INPUT_OFFSET + OUTPUT_OFFSET + CONFIRMATION_OFFSET + DELETE_OFFSET + PRODUCTION_OFFSET + DISTRIBUTION_OFFSET)
 #else
 # define DISTRIBUTION_OFFSET       0
 #endif
 #ifdef _TRANSFER_RATE_LOG
 # define TRANSFER_RATE_OFFSET      1
-# define TRANSFER_RATE_LOG_NO      (AFDDS_NO + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET + INPUT_OFFSET + OUTPUT_OFFSET + CONFIRMATION_OFFSET + DELETE_OFFSET + PRODUCTION_OFFSET + DISTRIBUTION_OFFSET + TRANSFER_RATE_OFFSET)
+# define TRANSFER_RATE_LOG_NO      (AFDD_NO + AFDDS_OFFSET + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET + INPUT_OFFSET + OUTPUT_OFFSET + CONFIRMATION_OFFSET + DELETE_OFFSET + PRODUCTION_OFFSET + DISTRIBUTION_OFFSET + TRANSFER_RATE_OFFSET)
 #else
 # define TRANSFER_RATE_OFFSET      0
 #endif
-#define MAINTAINER_LOG_NO          (AFDDS_NO + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET + INPUT_OFFSET + OUTPUT_OFFSET + CONFIRMATION_OFFSET + DELETE_OFFSET + PRODUCTION_OFFSET + DISTRIBUTION_OFFSET + TRANSFER_RATE_OFFSET + 1)
-#define AFD_WORKER_NO              (AFDDS_NO + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET + INPUT_OFFSET + OUTPUT_OFFSET + CONFIRMATION_OFFSET + DELETE_OFFSET + PRODUCTION_OFFSET + DISTRIBUTION_OFFSET + TRANSFER_RATE_OFFSET + 1 + 1)
+#define MAINTAINER_LOG_NO          (AFDD_NO + AFDDS_OFFSET + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET + INPUT_OFFSET + OUTPUT_OFFSET + CONFIRMATION_OFFSET + DELETE_OFFSET + PRODUCTION_OFFSET + DISTRIBUTION_OFFSET + TRANSFER_RATE_OFFSET + 1)
+#define AFD_WORKER_NO              (AFDD_NO + AFDDS_OFFSET + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET + INPUT_OFFSET + OUTPUT_OFFSET + CONFIRMATION_OFFSET + DELETE_OFFSET + PRODUCTION_OFFSET + DISTRIBUTION_OFFSET + TRANSFER_RATE_OFFSET + 1 + 1)
 #if defined (_INPUT_LOG) || defined (_OUTPUT_LOG) || defined (_CONFIRMATION_LOG) || defined (_DELETE_LOG) || defined (_PRODUCTION_LOG) || defined (_DISTRIBUTION_LOG)
 # define ALDAD_OFFSET              1
-# define ALDAD_NO                  (AFDDS_NO + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET + INPUT_OFFSET + OUTPUT_OFFSET + CONFIRMATION_OFFSET + DELETE_OFFSET + PRODUCTION_OFFSET + DISTRIBUTION_OFFSET + TRANSFER_RATE_OFFSET + 1 + 1 + ALDAD_OFFSET)
+# define ALDAD_NO                  (AFDD_NO + AFDDS_OFFSET + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET + INPUT_OFFSET + OUTPUT_OFFSET + CONFIRMATION_OFFSET + DELETE_OFFSET + PRODUCTION_OFFSET + DISTRIBUTION_OFFSET + TRANSFER_RATE_OFFSET + 1 + 1 + ALDAD_OFFSET)
 #else
 # define ALDAD_OFFSET              0
 #endif
-#define NO_OF_PROCESS              (AFDDS_NO + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET + INPUT_OFFSET + OUTPUT_OFFSET + CONFIRMATION_OFFSET + DELETE_OFFSET + PRODUCTION_OFFSET + DISTRIBUTION_OFFSET + TRANSFER_RATE_OFFSET + 1 + 1 + ALDAD_OFFSET + 1)
+#define NO_OF_PROCESS              (AFDD_NO + AFDDS_OFFSET + ATPD_OFFSET + WMOD_OFFSET + DEMCD_OFFSET + MAPPER_OFFSET + INPUT_OFFSET + OUTPUT_OFFSET + CONFIRMATION_OFFSET + DELETE_OFFSET + PRODUCTION_OFFSET + DISTRIBUTION_OFFSET + TRANSFER_RATE_OFFSET + 1 + 1 + ALDAD_OFFSET + 1)
 #define SHOW_OLOG_NO               30
 
 #define NA                         -1
@@ -684,6 +680,7 @@ typedef unsigned long       u_long_64;
 #define STALE                      -1
 #define CON_RESET                  2
 #define CON_REFUSED                3
+#define PIPE_CLOSED                4
 #define ON                         1
 #define OFF                        0
 #define ALL                        0
@@ -708,6 +705,7 @@ typedef unsigned long       u_long_64;
 #define GET_ONCE_ONLY              2
 #define APPEND_ONLY                3
 #define GET_ONCE_NOT_EXACT         4
+#define NOT_EXACT                  5
 #define DATA_MOVED                 1
 #define DATA_COPIED                3
 #define NORMAL_IDENTIFIER          0
@@ -1115,6 +1113,8 @@ typedef unsigned long       u_long_64;
 #endif
 #define ACCEPT_DOT_FILES_ID              "accept dot files"
 #define ACCEPT_DOT_FILES_ID_LENGTH       (sizeof(ACCEPT_DOT_FILES_ID) - 1)
+#define GET_DIR_LIST_ID                  "get dir list"
+#define GET_DIR_LIST_ID_LENGTH           (sizeof(GET_DIR_LIST_ID) - 1)
 #define DO_NOT_GET_DIR_LIST_ID           "do not get dir list"
 #define DO_NOT_GET_DIR_LIST_ID_LENGTH    (sizeof(DO_NOT_GET_DIR_LIST_ID) - 1)
 #define URL_CREATES_FILE_NAME_ID         "url creates file name"
@@ -1147,11 +1147,14 @@ typedef unsigned long       u_long_64;
 #define NO_DELIMITER_ID_LENGTH           (sizeof(NO_DELIMITER_ID) - 1)
 #define KEEP_PATH_ID                     "keep path"
 #define KEEP_PATH_ID_LENGTH              (sizeof(KEEP_PATH_ID) - 1)
+#define DIR_ZERO_SIZE_ID                 "retrieve zero size"
+#define DIR_ZERO_SIZE_ID_LENGTH          (sizeof(DIR_ZERO_SIZE_ID) - 1)
 #define UNKNOWN_FILES                    1
 #define QUEUED_FILES                     2
 #define OLD_LOCKED_FILES                 4
 #define UNREADABLE_FILES                 8
 #define OLD_RLOCKED_FILES                16
+#define OLD_ILOCKED_FILES                32
 
 /* Definitions for [options]. */
 #define TIFF2GTS_ID                      "tiff2gts"
@@ -1265,6 +1268,10 @@ typedef unsigned long       u_long_64;
 #define SILENT_NOT_LOCKED_FILE_ID_LENGTH (sizeof(SILENT_NOT_LOCKED_FILE_ID) - 1)
 #define AGEING_ID                        "ageing"
 #define AGEING_ID_LENGTH                 (sizeof(AGEING_ID) - 1)
+#define SEND_ZERO_SIZE_ID                "send zero size"
+#define SEND_ZERO_SIZE_ID_LENGTH         (sizeof(SEND_ZERO_SIZE_ID) - 1)
+#define NAME2DIR_ID                      "name2dir"
+#define NAME2DIR_ID_LENGTH               (sizeof(NAME2DIR_ID) - 1)
 
 /* Definitions for ageing. */
 #define DEFAULT_AGEING                   5
@@ -1340,6 +1347,7 @@ typedef unsigned long       u_long_64;
 #define ONE_DIR_COPY_TIMEOUT_DEF         "ONE_DIR_COPY_TIMEOUT"
 #define FULL_SCAN_TIMEOUT_DEF            "FULL_SCAN_TIMEOUT"
 #define REMOTE_FILE_CHECK_INTERVAL_DEF   "REMOTE_FILE_CHECK_INTERVAL"
+#define MAX_CHECK_FILE_DIR_DEFS          "MAX_CHECK_FILE_DIR"
 #ifdef WITH_INOTIFY
 # define DEFAULT_INOTIFY_FLAG_DEF        "DEFAULT_INOTIFY_FLAG"
 #endif
@@ -2114,44 +2122,45 @@ typedef unsigned long       u_long_64;
 
 /* Definitions for directory flags + options. */
 /* NOTE: Do not seperate these into flags + options. Reason is that */
-/*       Up to FRA version 7 these where all under flags. Only with */
-/*       version came the new variable dir_options.                 */
-#define MAX_COPIED                 1
-#define FILES_IN_QUEUE             2
-/* #define ____no_used____            4 */
-#define LINK_NO_EXEC               8
-#define DIR_DISABLED               16
-#define ACCEPT_DOT_FILES           32
-#define DONT_GET_DIR_LIST          64
-#define DIR_ERROR_SET              128
-#define WARN_TIME_REACHED          256
-#define DIR_ERROR_ACKN             512
-#define DIR_ERROR_OFFLINE          1024
-#define DIR_ERROR_ACKN_T           2048
-#define DIR_ERROR_OFFL_T           4096
-#define DIR_STOPPED                8192
+/*       up to FRA version 7 these where all under flags. Only with */
+/*       version 8 came the new variable dir_options.               */
+#define MAX_COPIED                 1              /*  1 */
+#define FILES_IN_QUEUE             2              /*  2 */
+#define DIR_ZERO_SIZE              4              /*  3 */
+#define LINK_NO_EXEC               8              /*  4 */
+#define DIR_DISABLED               16             /*  5 */
+#define ACCEPT_DOT_FILES           32             /*  6 */
+#define DONT_GET_DIR_LIST          64             /*  7 */
+#define DIR_ERROR_SET              128            /*  8 */
+#define WARN_TIME_REACHED          256            /*  9 */
+#define DIR_ERROR_ACKN             512            /* 10 */
+#define DIR_ERROR_OFFLINE          1024           /* 11 */
+#define DIR_ERROR_ACKN_T           2048           /* 12 */
+#define DIR_ERROR_OFFL_T           4096           /* 13 */
+#define DIR_STOPPED                8192           /* 14 */
 #ifdef WITH_INOTIFY
-# define INOTIFY_RENAME            16384
-# define INOTIFY_CLOSE             32768
+# define INOTIFY_RENAME            16384          /* 15 */
+# define INOTIFY_CLOSE             32768          /* 16 */
 #endif
-#define ALL_DISABLED               65536
+#define ALL_DISABLED               65536          /* 17 */
 #ifdef WITH_INOTIFY
-# define INOTIFY_ATTRIB            131072
-# define INOTIFY_NEEDS_SCAN        262144
-# define INOTIFY_CREATE            524288
+# define INOTIFY_ATTRIB            131072         /* 18 */
+# define INOTIFY_NEEDS_SCAN        262144         /* 19 */
+# define INOTIFY_CREATE            524288         /* 20 */
 #endif
-#define INFO_TIME_REACHED          1048576
-#define DO_NOT_PARALLELIZE         2097152
-#define DO_NOT_MOVE                4194304
+#define INFO_TIME_REACHED          1048576        /* 21 */
+#define DO_NOT_PARALLELIZE         2097152        /* 22 */
+#define DO_NOT_MOVE                4194304        /* 23 */
 #ifdef WITH_INOTIFY
-# define INOTIFY_DELETE            8388608
+# define INOTIFY_DELETE            8388608        /* 24 */
 #endif
-#define DIR_DISABLED_STATIC        16777216
-#define ONE_PROCESS_JUST_SCANNING  33554432
-#define URL_CREATES_FILE_NAME      67108864
-#define URL_WITH_INDEX_FILE_NAME   134217728
-#define NO_DELIMITER               268435456
-#define KEEP_PATH                  536870912
+#define DIR_DISABLED_STATIC        16777216       /* 25 */
+#define ONE_PROCESS_JUST_SCANNING  33554432       /* 26 */
+#define URL_CREATES_FILE_NAME      67108864       /* 27 */
+#define URL_WITH_INDEX_FILE_NAME   134217728      /* 28 */
+#define NO_DELIMITER               268435456      /* 29 */
+#define KEEP_PATH                  536870912      /* 30 */
+#define GET_DIR_LIST_HREF          1073741824     /* 31 */
 
 #ifdef WITH_INOTIFY
 /*
@@ -2219,6 +2228,7 @@ typedef unsigned long       u_long_64;
 #define UNREADABLE_FILES_IDC       32768
 #define LOCAL_REMOTE_DIR_IDC       65536
 #define CREATE_SRC_DIR_IDC         131072
+#define GET_DIR_LIST_IDC           262144
 
 /* In process AFD we have various stop flags. */
 #define STARTUP_ID                 -1
@@ -3026,7 +3036,8 @@ struct fileretrieve_status
                                             /*+-----+-------------------+*/
                                             /*| Bit |      Meaning      |*/
                                             /*+-----+-------------------+*/
-                                            /*| 6-8 | Not used.         |*/
+                                            /*| 7-8 | Not used.         |*/
+                                            /*|   6 | OLD_ILOCKED_FILES |*/
                                             /*|   5 | OLD_RLOCKED_FILES |*/
                                             /*|   4 | UNREADABLE_FILES  |*/
                                             /*|   3 | OLD_LOCKED_FILES  |*/
@@ -3063,7 +3074,8 @@ struct fileretrieve_status
                                             /*+-----+-------------------+*/
                                             /*| Bit |      Meaning      |*/
                                             /*+-----+-------------------+*/
-                                            /*|31-32| Not used.         |*/
+                                            /*|   32| Not used.         |*/
+                                            /*|   31| GET_DIR_LIST_HREF |*/
                                             /*|   30| KEEP_PATH         |*/
                                             /*|   29| NO_DELIMITER      |*/
                                             /*|   28| URL_WITH_INDEX_FILE_NAME|*/
@@ -3083,7 +3095,9 @@ struct fileretrieve_status
                                             /*| 8-14| Not used.         |*/
                                             /*|    7| DONT_GET_DIR_LIST |*/
                                             /*|    6| ACCEPT_DOT_FILES  |*/
-                                            /*|  1-5| Not used.         |*/
+                                            /*|  4-5| Not used.         |*/
+                                            /*|    3| DIR_ZERO_SIZE     |*/
+                                            /*|  1-2| Not used.         |*/
                                             /*+-----+-------------------+*/
           unsigned int  dir_flag;           /* Flag for this directory   */
                                             /* informing about the       */
@@ -3331,7 +3345,9 @@ struct afd_status
           signed char    archive_watch;
           signed char    afd_stat;        /* Statistic program            */
           signed char    afdd;
+#ifdef WITH_SSL
           signed char    afdds;
+#endif
 #ifdef _WITH_ATPD_SUPPORT
           signed char    atpd;            /* AFD Transfer Protocol Daemon.*/
 #endif
@@ -3686,7 +3702,8 @@ struct retrieve_list
                                          /* the list that are no longer at */
                                          /* the remote host.               */
           off_t         size;            /* Size of the file.              */
-          off_t         prev_size;       /* Previous size of the file.     */
+          off_t         prev_size;       /* Previous size of the file (for */
+                                         /* append only mode).             */
           time_t        file_mtime;      /* Modification time of file.     */
        };
 
@@ -4355,12 +4372,13 @@ extern int          assemble(char *, char *, int, char *, int, unsigned int,
                     get_rule(char *, int),
                     get_system_data(struct system_data *),
 #ifdef WITH_DUP_CHECK
-                    isdup(char *, char *, off_t, unsigned int, time_t, int, int,
+                    isdup(char *, char *, off_t, unsigned int, time_t,
+                          unsigned int, int,
 # ifdef HAVE_HW_CRC32
                           int,
 # endif
                           int, int),
-                    isdup_rm(char *, char *, off_t, unsigned int, int,
+                    isdup_rm(char *, char *, off_t, unsigned int, unsigned int,
 # ifdef HAVE_HW_CRC32
                              int,
 # endif

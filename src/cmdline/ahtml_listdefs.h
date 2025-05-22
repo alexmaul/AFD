@@ -1,6 +1,6 @@
 /*
- *  server_common_defs.h - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 2015 - 2022 Holger Kiehl <Holger.Kiehl@dwd.de>
+ *  ahtml_listdefs.h - Part of AFD, an automatic file distribution program.
+ *  Copyright (c) 2024 Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -17,14 +17,21 @@
  *  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-#ifndef __server_common_defs_h
-#define __server_common_defs_h
+#ifndef __ahtml_listdefs_h
+#define __ahtml_listdefs_h
 
-#include <openssl/ssl.h>
+#ifndef _STANDALONE_
+#include "afddefs.h"
+#include "fddefs.h"
+#endif
+#include "cmdline.h"
 
-/* Function Prototypes. */
-extern int     command(SSL *ssl, char *fmt, ...),
-               get_free_connection(const int);
-extern ssize_t ssl_write(SSL *, const char *, size_t);
+#define DEFAULT_HTML_LIST_FILENAME        ".html_list_filename.txt"
+#define DEFAULT_HTML_LIST_FILENAME_LENGTH (sizeof(DEFAULT_HTML_LIST_FILENAME) - 1)
 
-#endif /* __server_common_defs_h */
+/* Function prototypes. */
+extern void get_html_content(char *, struct data *);
+extern int  eval_html_dir_list(char *, off_t, unsigned char, int, int *,
+                               struct data *);
+
+#endif /* __ahtml_listdefs_h */

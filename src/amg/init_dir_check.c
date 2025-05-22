@@ -1,6 +1,6 @@
 /*
  *  init_dir_check.c - Part of AFD, an automatic file distribution program.
- *  Copyright (c) 1995 - 2023 Deutscher Wetterdienst (DWD),
+ *  Copyright (c) 1995 - 2025 Deutscher Wetterdienst (DWD),
  *                            Holger Kiehl <Holger.Kiehl@dwd.de>
  *
  *  This program is free software; you can redistribute it and/or modify
@@ -49,6 +49,8 @@ DESCR__S_M1
  **   12.01.2000 H.Kiehl Added receive log.
  **   16.05.2002 H.Kiehl Removed shared memory stuff.
  **   01.02.2010 H.Kiehl Option to set system wide force reread interval.
+ **   08.03.2025 H.Kiehl Make MAX_CHECK_FILE_DIRS configurable via
+ **                      AFD_CONFIG.
  **
  */
 DESCR__E_M1
@@ -95,6 +97,9 @@ extern int                        afd_file_dir_length,
                                   max_sched_priority,
                                   min_sched_priority,
 #endif
+#if defined (LINUX) && defined (DIR_CHECK_CAP_CHOWN)
+                                  force_set_hardlinks_protected,
+#endif
                                   max_process,
 #ifdef MULTI_FS_SUPPORT
                                   no_of_extra_work_dirs,
@@ -134,7 +139,8 @@ extern int                        afd_file_dir_length,
 extern mode_t                     default_create_source_dir_mode;
 extern time_t                     default_exec_timeout;
 extern unsigned int               default_age_limit,
-                                  force_reread_interval;
+                                  force_reread_interval,
+                                  max_check_file_dirs;
 extern pid_t                      *opl;
 #ifdef _WITH_PTHREAD
 extern pthread_t                  *thread;
@@ -1384,6 +1390,37 @@ get_afd_config_value(void)
                            "%s%s/%s", p_work_dir, ETC_DIR, value);
          }
       }
+      if (get_definition(buffer, MAX_CHECK_FILE_DIR_DEFS,
+                         value, MAX_INT_LENGTH) != NULL)
+      {
+         max_check_file_dirs = (unsigned int)atoi(value);
+      }
+      else
+      {
+         max_check_file_dirs = MAX_CHECK_FILE_DIRS;
+      }
+#if defined (LINUX) && defined (DIR_CHECK_CAP_CHOWN)
+      if (get_definition(buffer, FORCE_SET_HARDLINKS_PROTECTED_DEF,
+                         value, MAX_INT_LENGTH) != NULL)
+      {
+         if ((value[0] == '\0') ||
+             (((value[0] == 'Y') || (value[0] == 'y')) &&
+              ((value[1] == 'E') || (value[1] == 'e')) &&
+              ((value[2] == 'S') || (value[2] == 's')) &&
+              (value[3] == '\0')))
+         {
+            force_set_hardlinks_protected = YES;
+         }
+         else
+         {
+            force_set_hardlinks_protected = NO;
+         }
+      }
+      else
+      {
+         force_set_hardlinks_protected = NO;
+      }
+#endif
 #ifdef MULTI_FS_SUPPORT
       get_extra_work_dirs(buffer, &no_of_extra_work_dirs, &ewl, YES);
 #endif
@@ -1402,6 +1439,9 @@ get_afd_config_value(void)
 #ifdef MULTI_FS_SUPPORT
       no_of_extra_work_dirs = 0;
       ewl = NULL;
+#endif
+#if defined (LINUX) && defined (DIR_CHECK_CAP_CHOWN)
+      force_set_hardlinks_protected = NO;
 #endif
    }
 

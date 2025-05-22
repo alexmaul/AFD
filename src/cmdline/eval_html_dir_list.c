@@ -1,244 +1,116 @@
+/*
+ *  eval_html_dir_list.c - Part of AFD, an automatic file distribution
+ *                         program.
+ *  Copyright (c) 2006 - 2024 Holger Kiehl <Holger.Kiehl@dwd.de>
+ *
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation; either version 2 of the License, or
+ *  (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program; if not, write to the Free Software
+ *  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+#include "ahtml_listdefs.h"
+
+DESCR__S_M3
+/*
+ ** NAME
+ **   eval_html_dir_list - retrieves filename, size and date
+ **
+ ** SYNOPSIS
+ **   int eval_html_dir_list(char          *html_buffer,
+ **                          off_t         bytes_buffered,
+ **                          unsigned char list_version,
+ **                          int           href_search_only,
+ **                          int           *listing_complete,
+ **                          struct data   *p_db)
+ **
+ ** DESCRIPTION
+ **
+ ** RETURN VALUES
+ **   None.
+ **
+ ** AUTHOR
+ **   H.Kiehl
+ **
+ ** HISTORY
+ **   08.03.2024 H.Kiehl Copied from get_remote_file_names_http.c.
+ **
+ */
+DESCR__E_M3
+
 #include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
-#include <ctype.h>
-#include <sys/types.h>
-#include <unistd.h>
+#include <string.h>                /* strerror(), memmove()              */
+#include <stdlib.h>                /* malloc(), realloc(), free()        */
+#include <ctype.h>                 /* isdigit()                          */
 #include <errno.h>
-#include "afddefs.h"
+#include "httpdefs.h"
 
-#define STORE_HTML_STRING(html_str, str_len, max_str_length, end_char)\
-        {                                                          \
-           str_len = 0;                                            \
-           while ((*ptr != end_char) && (*ptr != '\n') && (*ptr != '\r') &&\
-                  (*ptr != '\0') && (str_len < ((max_str_length) - 1)))\
-           {                                                       \
-              if (*ptr == '&')                                     \
-              {                                                    \
-                 ptr++;                                            \
-                 if ((*(ptr + 1) == 'u') && (*(ptr + 2) == 'm') && \
-                     (*(ptr + 3) == 'l') && (*(ptr + 4) == ';'))   \
-                 {                                                 \
-                    switch (*ptr)                                  \
-                    {                                              \
-                       case 'a': (html_str)[str_len++] = 228;      \
-                                 break;                            \
-                       case 'A': (html_str)[str_len++] = 196;      \
-                                 break;                            \
-                       case 'e': (html_str)[str_len++] = 235;      \
-                                 break;                            \
-                       case 'E': (html_str)[str_len++] = 203;      \
-                                 break;                            \
-                       case 'i': (html_str)[str_len++] = 239;      \
-                                 break;                            \
-                       case 'I': (html_str)[str_len++] = 207;      \
-                                 break;                            \
-                       case 'o': (html_str)[str_len++] = 246;      \
-                                 break;                            \
-                       case 'O': (html_str)[str_len++] = 214;      \
-                                 break;                            \
-                       case 'u': (html_str)[str_len++] = 252;      \
-                                 break;                            \
-                       case 'U': (html_str)[str_len++] = 220;      \
-                                 break;                            \
-                       case 's': (html_str)[str_len++] = 223;      \
-                                 break;                            \
-                       case 'y': (html_str)[str_len++] = 255;      \
-                                 break;                            \
-                       case 'Y': (html_str)[str_len++] = 195;      \
-                                 break;                            \
-                       default : /* Just ignore it. */             \
-                                 break;                            \
-                    }                                              \
-                    ptr += 5;                                      \
-                    continue;                                      \
-                 }                                                 \
-                 else if ((*ptr == 's') && (*(ptr + 1) == 'z') &&  \
-                          (*(ptr + 2) == 'l') && (*(ptr + 3) == 'i') &&\
-                          (*(ptr + 4) == 'g') && (*(ptr + 5) == ';'))\
-                      {                                            \
-                         (html_str)[str_len++] = 223;              \
-                         ptr += 6;                                 \
-                         continue;                                 \
-                      }                                            \
-                 else if ((*ptr == 'a') && (*(ptr + 1) == 'm') &&  \
-                          (*(ptr + 2) == 'p') && (*(ptr + 3) == ';'))\
-                      {                                            \
-                         (html_str)[str_len++] = 38;               \
-                         ptr += 4;                                 \
-                         continue;                                 \
-                      }                                            \
-                 else if ((*ptr == 'd') && (*(ptr + 1) == 'e') &&  \
-                          (*(ptr + 2) == 'g') && (*(ptr + 3) == ';'))\
-                      {                                            \
-                         (html_str)[str_len++] = 176;              \
-                         ptr += 4;                                 \
-                         continue;                                 \
-                      }                                            \
-                 else if ((*ptr == 'g') && (*(ptr + 1) == 't') &&  \
-                          (*(ptr + 2) == ';'))                     \
-                      {                                            \
-                         (html_str)[str_len++] = '>';              \
-                         ptr += 3;                                 \
-                         continue;                                 \
-                      }                                            \
-                 else if ((*ptr == 'l') && (*(ptr + 1) == 't') &&  \
-                          (*(ptr + 2) == ';'))                     \
-                      {                                            \
-                         (html_str)[str_len++] = '<';              \
-                         ptr += 3;                                 \
-                         continue;                                 \
-                      }                                            \
-                      else                                         \
-                      {                                            \
-                         while ((*ptr != ';') && (*ptr != '<') &&  \
-                                (*ptr != '\n') && (*ptr != '\r') &&\
-                                (*ptr != '\0'))                    \
-                         {                                         \
-                            ptr++;                                 \
-                         }                                         \
-                         if (*ptr != ';')                          \
-                         {                                         \
-                            break;                                 \
-                         }                                         \
-                      }                                            \
-              }                                                    \
-              (html_str)[str_len] = *ptr;                          \
-              str_len++; ptr++;                                    \
-           }                                                       \
-           (html_str)[str_len] = '\0';                             \
-        }
-#define STORE_HTML_DATE()                                          \
-        {                                                          \
-           int i = 0,                                              \
-               space_counter = 0;                                  \
-                                                                   \
-           while ((*ptr != '<') && (*ptr != '\n') && (*ptr != '\r') &&\
-                  (*ptr != '\0') && (i < (MAX_FILENAME_LENGTH - 1)))\
-           {                                                       \
-              if (*ptr == ' ')                                     \
-              {                                                    \
-                 if (space_counter == 1)                           \
-                 {                                                 \
-                    while (*ptr == ' ')                            \
-                    {                                              \
-                       ptr++;                                      \
-                    }                                              \
-                    break;                                         \
-                 }                                                 \
-                 space_counter++;                                  \
-              }                                                    \
-              if (*ptr == '&')                                     \
-              {                                                    \
-                 ptr++;                                            \
-                 if ((*(ptr + 1) == 'u') && (*(ptr + 2) == 'm') && \
-                     (*(ptr + 3) == 'l') && (*(ptr + 4) == ';'))   \
-                 {                                                 \
-                    switch (*ptr)                                  \
-                    {                                              \
-                       case 'a': date_str[i++] = 228;              \
-                                 break;                            \
-                       case 'A': date_str[i++] = 196;              \
-                                 break;                            \
-                       case 'o': date_str[i++] = 246;              \
-                                 break;                            \
-                       case 'O': date_str[i++] = 214;              \
-                                 break;                            \
-                       case 'u': date_str[i++] = 252;              \
-                                 break;                            \
-                       case 'U': date_str[i++] = 220;              \
-                                 break;                            \
-                       case 's': date_str[i++] = 223;              \
-                                 break;                            \
-                       default : /* Just ignore it. */             \
-                                 break;                            \
-                    }                                              \
-                    ptr += 5;                                      \
-                    continue;                                      \
-                 }                                                 \
-                 else                                              \
-                 {                                                 \
-                    while ((*ptr != ';') && (*ptr != '<') &&       \
-                           (*ptr != '\n') && (*ptr != '\r') &&     \
-                           (*ptr != '\0'))                         \
-                    {                                              \
-                       ptr++;                                      \
-                    }                                              \
-                    if (*ptr != ';')                               \
-                    {                                              \
-                       break;                                      \
-                    }                                              \
-                 }                                                 \
-              }                                                    \
-              date_str[i] = *ptr;                                  \
-              i++; ptr++;                                          \
-           }                                                       \
-           date_str[i] = '\0';                                     \
-        }
-
-/* Global variables. */
-int        sys_log_fd = STDERR_FILENO;
-char       *p_work_dir;
-const char *sys_log_name = SYSTEM_LOG_FIFO;
 
 /* Local function prototypes. */
-static int   eval_html_dir_list(char *);
 static off_t convert_size(char *, off_t *);
+static int   href_list(char *, off_t, struct data *);
 
 
-/*$$$$$$$$$$$$$$$$$$$$$$$$$$$ html_listing $$$$$$$$$$$$$$$$$$$$$$$$$$$$$$*/
+/*######################## eval_html_dir_list() #########################*/
 int
-main(int argc, char *argv[])
+eval_html_dir_list(char          *html_buffer,
+                   off_t         bytes_buffered,
+                   unsigned char list_version,
+                   int           href_search_only,
+                   int           *listing_complete,
+                   struct data   *p_db)
 {
-   char *buffer = NULL;
+   int  status = SUCCESS;
+   char *ptr;
 
-   if (argc != 2)
+   if (listing_complete != NULL)
    {
-      (void)fprintf(stderr, "Usage: %s <filename>\n", argv[0]);
-      exit(-1);
+      *listing_complete = YES;
    }
-   if (read_file(argv[1], &buffer) == INCORRECT)
+   if (href_search_only == YES)
    {
-      (void)fprintf(stderr, "Failed to read_file() %s\n", argv[1]);
-      exit(-1);
-   }
-   if (eval_html_dir_list(buffer) != SUCCESS)
-   {
-      (void)fprintf(stderr, "eval_html_dir_list() failed.\n");
-      exit(-1);
-   }
-
-   exit(SUCCESS);
-}
-
-
-/*++++++++++++++++++++++++ eval_html_dir_list() +++++++++++++++++++++++++*/
-static int
-eval_html_dir_list(char *html_buffer)
-{
-   int    listing_complete = YES;
-   size_t bytes_buffered = strlen(html_buffer);
-   char   *ptr,
-          ssh_protocol = '1';
-
-   if ((ptr = llposi(html_buffer, bytes_buffered, "<h1>", 4)) == NULL)
-   {
-      if ((ptr = llposi(html_buffer, bytes_buffered, "<PRE>", 5)) == NULL)
+      status = href_list(html_buffer, bytes_buffered, p_db);
+      if ((ptr = llposi(html_buffer, bytes_buffered,
+                        "<IsTruncated>", 13)) != NULL)
       {
-         if ((ptr = llposi(html_buffer, bytes_buffered,
+         /* true */
+         if ((*(ptr - 1) == 't') && (*ptr == 'r') &&
+             (*(ptr + 1) == 'u') && (*(ptr + 2) == 'e') &&
+             (*(ptr + 3) == '<'))
+         {
+            if (listing_complete != NULL)
+            {
+               *listing_complete = NO;
+            }
+         }
+      }
+      return(status);
+   }
+   if ((ptr = llposi(html_buffer, (size_t)bytes_buffered, "<h1>", 4)) == NULL)
+   {
+      if ((ptr = llposi(html_buffer, (size_t)bytes_buffered, "<PRE>", 5)) == NULL)
+      {
+         if ((ptr = llposi(html_buffer, (size_t)bytes_buffered,
                            "<?xml version=\"", 15)) == NULL)
          {
-            if ((ptr = llposi(html_buffer, bytes_buffered,
+            if ((ptr = llposi(html_buffer, (size_t)bytes_buffered,
                               "<div id=\"downloadLinkArea\">",
                               27)) == NULL)
             {
-               if ((ptr = llposi(html_buffer, bytes_buffered,
+               if ((ptr = llposi(html_buffer, (size_t)bytes_buffered,
                                  "<div id=\"contentDiv\">",
                                  21)) == NULL)
                {
-                  (void)printf("Unknown HTML directory listing. Please send author a link so that this can be implemented. (%s %d)\n",
-                               __FILE__, __LINE__);
-                  return(INCORRECT);
+                  status = href_list(html_buffer, bytes_buffered, p_db);
                }
                else
                {
@@ -256,11 +128,12 @@ eval_html_dir_list(char *html_buffer)
                      ptr++;
                   }
 
-                  while ((ptr = llposi(ptr, bytes_buffered,
+                  while ((ptr = llposi(ptr, (end_ptr - ptr),
                                        "<a href=\"", 9)) != NULL)
                   {
                      ptr--;
                      file_name_length = 0;
+
                      /*
                       * If '<a href="' starts with a / lets take the
                       * complete path as file name. Reason is that
@@ -324,8 +197,8 @@ eval_html_dir_list(char *html_buffer)
                                         while ((*ptr != '>') &&
                                                (*ptr != '\n') &&
                                                (*ptr != '\r') &&
-                                               (*ptr != '\0'))
-                                        {
+                                                  (*ptr != '\0'))
+                                     {
                                            ptr++;
                                         }
                                         if (*ptr == '>')
@@ -465,7 +338,8 @@ eval_html_dir_list(char *html_buffer)
                                     if (i > 0)
                                     {
                                        date_str[i] = '\0';
-                                       file_size = (off_t)str2offt(date_str, NULL, 10);
+                                       file_size = (off_t)str2offt(date_str,
+                                                                   NULL, 10);
                                        exact_size = 1;
                                     }
                                  }
@@ -485,10 +359,47 @@ eval_html_dir_list(char *html_buffer)
                            break;
                         }
                      }
-                     (void)printf("name=%s length=%d mtime=%ld exact_date=%d exact_size=%ld file_size=%ld\n",
-                                  file_name, file_name_length, file_mtime,
-                                  exact_date, exact_size, file_size);
-
+                     if (p_db->verbose > 0)
+                     {
+                        (void)fprintf(stdout,
+#if SIZEOF_OFF_T == 4
+# if SIZEOF_TIME_T == 4
+                                      "%s mtime=%ld exact=%d size=%ld exact=%ld (%s %d)\n",
+# else
+                                      "%s mtime=%lld exact=%d size=%ld exact=%ld (%s %d)\n",
+# endif
+#else
+# if SIZEOF_TIME_T == 4
+                                      "%s mtime=%ld exact=%d size=%lld exact=%lld (%s %d)\n",
+# else
+                                      "%s mtime=%lld exact=%d size=%lld exact=%lld (%s %d)\n",
+# endif
+#endif
+                                      file_name, (pri_time_t)file_mtime,
+                                      exact_date, (pri_off_t)file_size,
+                                      (pri_off_t)exact_size, __FILE__,
+                                      __LINE__);
+                     }
+                     else
+                     {
+                        (void)fprintf(stdout,
+#if SIZEOF_OFF_T == 4
+# if SIZEOF_TIME_T == 4
+                                      "%s mtime=%ld exact=%d size=%ld exact=%ld\n",
+# else
+                                      "%s mtime=%lld exact=%d size=%ld exact=%ld\n",
+# endif
+#else
+# if SIZEOF_TIME_T == 4
+                                      "%s mtime=%ld exact=%d size=%lld exact=%lld\n",
+# else
+                                      "%s mtime=%lld exact=%d size=%lld exact=%lld\n",
+# endif
+#endif
+                                      file_name, (pri_time_t)file_mtime,
+                                      exact_date, (pri_off_t)file_size,
+                                      (pri_off_t)exact_size);
+                     }
                      bytes_buffered = end_ptr - ptr;
                   } /* while "<a href=" */
                }
@@ -514,7 +425,7 @@ eval_html_dir_list(char *html_buffer)
                   ptr++;
                }
 
-               while ((ptr = llposi(ptr, bytes_buffered,
+               while ((ptr = llposi(ptr, (end_ptr - ptr),
                                     "<a href=\"", 9)) != NULL)
                {
                   ptr--;
@@ -528,29 +439,36 @@ eval_html_dir_list(char *html_buffer)
                   STORE_HTML_STRING(file_name, file_name_length,
                                     MAX_FILENAME_LENGTH, '"');
 
-                  (void)printf("name=%s length=%d mtime=-1 exact_date=%d exact_size=-1 file_size=-1\n",
-                               file_name, file_name_length, DS2UT_NONE);
-
+                  if (p_db->verbose > 0)
+                  {
+                     (void)fprintf(stdout,
+                                   "%s mtime=-1 exact=%d size=-1 exact=-1 (%s %d)\n",
+                                   file_name, DS2UT_NONE, __FILE__, __LINE__);
+                  }
+                  else
+                  {
+                     (void)fprintf(stdout,
+                                   "%s mtime=-1 exact=%d size=-1 exact=-1\n",
+                                   file_name, DS2UT_NONE);
+                  }
                   bytes_buffered = end_ptr - ptr;
                } /* while "<a href=" */
             }
          }
          else
          {
-            if ((ptr = llposi(ptr, bytes_buffered,
+            if ((ptr = llposi(ptr, (bytes_buffered - (ptr - html_buffer)),
                               "<IsTruncated>", 13)) == NULL)
             {
-               (void)printf("Unknown HTML directory listing. Please send author a link so that this can be implemented. (%s %d)\n",
-                            __FILE__, __LINE__);
-               return(INCORRECT);
+               status = href_list(html_buffer, bytes_buffered, p_db);
             }
             else
             {
                int    date_str_length,
                       exact_date = DS2UT_NONE,
                       file_name_length = -1;
-               size_t bytes_buffered_original = bytes_buffered;
-               off_t  exact_size,
+               off_t  bytes_buffered_original = bytes_buffered,
+                      exact_size,
                       file_size;
                time_t file_mtime;
                char   date_str[MAX_FILENAME_LENGTH],
@@ -566,12 +484,15 @@ eval_html_dir_list(char *html_buffer)
                    (*(ptr + 1) == 'u') && (*(ptr + 2) == 'e') &&
                    (*(ptr + 3) == '<'))
                {
-                  listing_complete = NO;
+                  if (listing_complete != NULL)
+                  {
+                     *listing_complete = NO;
+                  }
                   ptr += 2;
                }
 
                ptr = html_buffer;
-               while ((ptr = llposi(ptr, bytes_buffered,
+               while ((ptr = llposi(ptr, (end_ptr - ptr),
                                     "<Contents><Key>", 15)) != NULL)
                {
                   ptr--;
@@ -680,64 +601,137 @@ eval_html_dir_list(char *html_buffer)
                                        size_str[date_str_length] = '\0';
                                        exact_size = convert_size(size_str,
                                                                  &file_size);
-                                       (void)printf("name=%s length=%d mtime=%ld exact_date=%d exact_size=%ld file_size=%ld\n",
-                                                    file_name,
-                                                    file_name_length,
-                                                    file_mtime,
-                                                    exact_date,
-                                                    exact_size, file_size);
+                                       if (p_db->verbose > 0)
+                                       {
+                                          (void)fprintf(stdout,
+#if SIZEOF_OFF_T == 4
+# if SIZEOF_TIME_T == 4
+                                                        "%s mtime=%ld exact=%d size=%ld exact=%ld (%s %d)\n",
+# else
+                                                        "%s mtime=%lld exact=%d size=%ld exact=%ld (%s %d)\n",
+# endif
+#else
+# if SIZEOF_TIME_T == 4
+                                                        "%s mtime=%ld exact=%d size=%lld exact=%lld (%s %d)\n",
+# else
+                                                        "%s mtime=%lld exact=%d size=%lld exact=%lld (%s %d)\n",
+# endif
+#endif
+                                                        file_name,
+                                                        (pri_time_t)file_mtime,
+                                                        exact_date,
+                                                        (pri_off_t)file_size,
+                                                        (pri_off_t)exact_size,
+                                                        __FILE__, __LINE__);
+                                       }
+                                       else
+                                       {
+                                          (void)fprintf(stdout,
+#if SIZEOF_OFF_T == 4
+# if SIZEOF_TIME_T == 4
+                                                        "%s mtime=%ld exact=%d size=%ld exact=%ld\n",
+# else
+                                                        "%s mtime=%lld exact=%d size=%ld exact=%ld\n",
+# endif
+#else
+# if SIZEOF_TIME_T == 4
+                                                        "%s mtime=%ld exact=%d size=%lld exact=%lld\n",
+# else
+                                                        "%s mtime=%lld exact=%d size=%lld exact=%lld\n",
+# endif
+#endif
+                                                        file_name,
+                                                        (pri_time_t)file_mtime,
+                                                        exact_date,
+                                                        (pri_off_t)file_size,
+                                                        (pri_off_t)exact_size);
+                                       }
                                     }
                                     else
                                     {
-                                       (void)printf("Unable to store size (length=%d char=%d). (%s %d)\n",
-                                                    file_name_length,
-                                                    (int)*ptr,
-                                                    __FILE__, __LINE__);
+                                       trans_log(ERROR_SIGN, __FILE__, __LINE__,
+                                                 "eval_html_dir_list", NULL,
+                                                 "Unable to store size (length=%d char=%d).",
+                                                 file_name_length, (int)*ptr);
+                                       if (listing_complete != NULL)
+                                       {
+                                          *listing_complete = YES;
+                                       }
                                        return(INCORRECT);
                                     }
                                  }
                                  else
                                  {
-                                    (void)printf("No matching /ETag><Size> found. (%s %d)\n",
-                                                 __FILE__, __LINE__);
+                                    trans_log(ERROR_SIGN, __FILE__, __LINE__,
+                                              "eval_html_dir_list", NULL,
+                                              "No matching /ETag><Size> found.");
+                                    if (listing_complete != NULL)
+                                    {
+                                       *listing_complete = YES;
+                                    }
                                     return(INCORRECT);
                                  }
                               }
                               else
                               {
-                                 (void)printf("Unable to store etag (length=%d char=%d). (%s %d)\n",
-                                              file_name_length, (int)*ptr,
-                                              __FILE__, __LINE__);
+                                 trans_log(ERROR_SIGN, __FILE__, __LINE__,
+                                           "eval_html_dir_list", NULL,
+                                           "Unable to store etag (length=%d char=%d).",
+                                           file_name_length, (int)*ptr);
+                                 if (listing_complete != NULL)
+                                 {
+                                    *listing_complete = YES;
+                                 }
                                  return(INCORRECT);
                               }
                            }
                            else
                            {
-                              (void)printf("No matching /LastModified><ETag> found. (%s %d)\n",
-                                           __FILE__, __LINE__);
+                              trans_log(ERROR_SIGN, __FILE__, __LINE__,
+                                        "eval_html_dir_list", NULL,
+                                        "No matching /LastModified><ETag> found.");
+                              if (listing_complete != NULL)
+                              {
+                                 *listing_complete = YES;
+                              }
                               return(INCORRECT);
                            }
                         }
                         else
                         {
-                           (void)printf("Unable to store date (length=%d char=%d). (%s %d)\n",
-                                        file_name_length, (int)*ptr,
-                                        __FILE__, __LINE__);
+                           trans_log(ERROR_SIGN, __FILE__, __LINE__,
+                                     "eval_html_dir_list", NULL,
+                                     "Unable to store date (length=%d char=%d).",
+                                     file_name_length, (int)*ptr);
+                           if (listing_complete != NULL)
+                           {
+                              *listing_complete = YES;
+                           }
                            return(INCORRECT);
                         }
                      }
                      else
                      {
-                        (void)printf("No matching /Key><LastModified> found. (%s %d)\n",
-                                     __FILE__, __LINE__);
+                        trans_log(ERROR_SIGN, __FILE__, __LINE__,
+                                  "eval_html_dir_list", NULL,
+                                  "No matching /Key><LastModified> found.");
+                        if (listing_complete != NULL)
+                        {
+                           *listing_complete = YES;
+                        }
                         return(INCORRECT);
                      }
                   }
                   else
                   {
-                     (void)printf("Unable to store file name (length=%d char=%d). (%s %d)\n",
-                                  file_name_length, (int)*ptr,
-                                  __FILE__, __LINE__);
+                     trans_log(ERROR_SIGN, __FILE__, __LINE__,
+                               "eval_html_dir_list", NULL,
+                               "Unable to store file name (length=%d char=%d).",
+                               file_name_length, (int)*ptr);
+                     if (listing_complete != NULL)
+                     {
+                        *listing_complete = YES;
+                     }
                      return(INCORRECT);
                   }
                   bytes_buffered = end_ptr - ptr;
@@ -745,28 +739,29 @@ eval_html_dir_list(char *html_buffer)
 
                if (file_name_length == -1)
                {
-                  listing_complete = YES;
+                  if (listing_complete != NULL)
+                  {
+                     *listing_complete = YES;
+                  }
 
                   /* Bucket is empty or we have some new */
                   /* listing type. So check if KeyCount  */
                   /* is zero.                            */
                   if ((ptr = llposi(html_buffer,
-                                    bytes_buffered_original,
+                                    (size_t)bytes_buffered_original,
                                     "<KeyCount>0</KeyCount>", 22)) == NULL)
                   {
                      /* No <Contents><Key> found! */
-                     (void)printf("Unknown HTML directory listing. Please send author a link so that this can be implemented. (%s %d)",
-                                  __FILE__, __LINE__);
-                     return(INCORRECT);
+                     return(href_list(html_buffer, bytes_buffered, p_db));
                   }
                }
 
-               if (listing_complete == NO)
+               if ((listing_complete != NULL) && (*listing_complete == NO))
                {
                   int  marker_name_length;
                   char marker_name[24];
 
-                  if (ssh_protocol == '1')
+                  if (list_version == '1')
                   {
                      (void)strcpy(marker_name, "<NextMarker>");
                      marker_name_length = 12;
@@ -777,7 +772,7 @@ eval_html_dir_list(char *html_buffer)
                      marker_name_length = 23;
                   }
                   if ((ptr = llposi(html_buffer,
-                                    bytes_buffered_original,
+                                    (size_t)bytes_buffered_original,
                                     marker_name,
                                     marker_name_length)) != NULL)
                   {
@@ -793,13 +788,16 @@ eval_html_dir_list(char *html_buffer)
                   }
                   else
                   {
-                     if (ssh_protocol != '1')
+                     if (list_version != '1')
                      {
-                        (void)printf("<IsTruncated> is true, but could not locate a <NextContinuationToken>! (%s %d)\n",
-                                     __FILE__, __LINE__);
+                        trans_log(ERROR_SIGN, __FILE__, __LINE__,
+                                  NULL, html_buffer,
+                                  "<IsTruncated> is true, but could not locate a <NextContinuationToken>!");
+                        *listing_complete = YES;
                         return(INCORRECT);
                      }
                   }
+                  http_set_marker(file_name, file_name_length);
                }
             }
          }
@@ -939,8 +937,7 @@ eval_html_dir_list(char *html_buffer)
                         /* Store size string. */
                         STORE_HTML_STRING(size_str, str_len,
                                           MAX_FILENAME_LENGTH, '<');
-                        exact_size = convert_size(size_str,
-                                                  &file_size);
+                        exact_size = convert_size(size_str, &file_size);
                      }
                      else
                      {
@@ -954,6 +951,46 @@ eval_html_dir_list(char *html_buffer)
                      exact_size = -1;
                      file_size = -1;
                   }
+                  if (p_db->verbose > 0)
+                  {
+                     (void)fprintf(stdout,
+#if SIZEOF_OFF_T == 4
+# if SIZEOF_TIME_T == 4
+                                   "%s mtime=%ld exact=%d size=%ld exact=%ld (%s %d)\n",
+# else
+                                   "%s mtime=%lld exact=%d size=%ld exact=%ld (%s %d)\n",
+# endif
+#else
+# if SIZEOF_TIME_T == 4
+                                   "%s mtime=%ld exact=%d size=%lld exact=%lld (%s %d)\n",
+# else
+                                   "%s mtime=%lld exact=%d size=%lld exact=%lld (%s %d)\n",
+# endif
+#endif
+                                   file_name, (pri_time_t)file_mtime,
+                                   exact_date, (pri_off_t)file_size,
+                                   (pri_off_t)exact_size, __FILE__, __LINE__);
+                  }
+                  else
+                  {
+                     (void)fprintf(stdout,
+#if SIZEOF_OFF_T == 4
+# if SIZEOF_TIME_T == 4
+                                   "%s mtime=%ld exact=%d size=%ld exact=%ld\n",
+# else
+                                   "%s mtime=%lld exact=%d size=%ld exact=%ld\n",
+# endif
+#else
+# if SIZEOF_TIME_T == 4
+                                   "%s mtime=%ld exact=%d size=%lld exact=%lld\n",
+# else
+                                   "%s mtime=%lld exact=%d size=%lld exact=%lld\n",
+# endif
+#endif
+                                   file_name, (pri_time_t)file_mtime,
+                                   exact_date, (pri_off_t)file_size,
+                                   (pri_off_t)exact_size);
+                  }
                }
                else
                {
@@ -963,10 +1000,6 @@ eval_html_dir_list(char *html_buffer)
                   file_size = -1;
                   break;
                }
-
-               (void)printf("name=%s length=%d mtime=%ld exact_date=%d exact_size=%ld file_size=%ld\n",
-                            file_name, file_name_length, file_mtime,
-                            exact_date, exact_size, file_size);
 
                /* Go to end of line. */
                while ((*ptr != '\n') && (*ptr != '\r') &&
@@ -982,9 +1015,7 @@ eval_html_dir_list(char *html_buffer)
          }
          else
          {
-            (void)printf("Unknown HTML directory listing. Please send author a link so that this can be implemented. (%s %d)\n",
-                         __FILE__, __LINE__);
-            return(INCORRECT);
+            status = href_list(html_buffer, bytes_buffered, p_db);
          }
       }
    }
@@ -994,7 +1025,7 @@ eval_html_dir_list(char *html_buffer)
              file_name_length;
       time_t file_mtime;
       off_t  exact_size,
-             file_size = -1;
+             file_size;
       char   date_str[MAX_FILENAME_LENGTH],
              file_name[MAX_FILENAME_LENGTH],
              size_str[MAX_FILENAME_LENGTH];
@@ -1063,6 +1094,7 @@ eval_html_dir_list(char *html_buffer)
                }
             }
 
+            /* <tr><td */
             if ((*ptr == '<') && (*(ptr + 1) == 't') &&
                 (*(ptr + 2) == 'r') && (*(ptr + 3) == '>') &&
                 (*(ptr + 4) == '<') && (*(ptr + 5) == 't') &&
@@ -1227,6 +1259,47 @@ eval_html_dir_list(char *html_buffer)
                            exact_size = -1;
                            file_size = -1;
                         }
+                        if (p_db->verbose > 0)
+                        {
+                           (void)fprintf(stdout,
+#if SIZEOF_OFF_T == 4
+# if SIZEOF_TIME_T == 4
+                                         "%s mtime=%ld exact=%d size=%ld exact=%ld (%s %d)\n",
+# else
+                                         "%s mtime=%lld exact=%d size=%ld exact=%ld (%s %d)\n",
+# endif
+#else
+# if SIZEOF_TIME_T == 4
+                                         "%s mtime=%ld exact=%d size=%lld exact=%lld (%s %d)\n",
+# else
+                                         "%s mtime=%lld exact=%d size=%lld exact=%lld (%s %d)\n",
+# endif
+#endif
+                                         file_name, (pri_time_t)file_mtime,
+                                         exact_date, (pri_off_t)file_size,
+                                         (pri_off_t)exact_size, __FILE__,
+                                         __LINE__);
+                        }
+                        else
+                        {
+                           (void)fprintf(stdout,
+#if SIZEOF_OFF_T == 4
+# if SIZEOF_TIME_T == 4
+                                         "%s mtime=%ld exact=%d size=%ld exact=%ld\n",
+# else
+                                         "%s mtime=%lld exact=%d size=%ld exact=%ld\n",
+# endif
+#else
+# if SIZEOF_TIME_T == 4
+                                         "%s mtime=%ld exact=%d size=%lld exact=%lld\n",
+# else
+                                         "%s mtime=%lld exact=%d size=%lld exact=%lld\n",
+# endif
+#endif
+                                         file_name, (pri_time_t)file_mtime,
+                                         exact_date, (pri_off_t)file_size,
+                                         (pri_off_t)exact_size);
+                        }
                      }
                      else
                      {
@@ -1235,10 +1308,6 @@ eval_html_dir_list(char *html_buffer)
                         exact_size = -1;
                         file_size = -1;
                      }
-
-                     (void)printf("name=%s length=%d mtime=%ld exact_date=%d exact_size=%ld file_size=%ld\n",
-                                  file_name, file_name_length, file_mtime,
-                                  exact_date, exact_size, file_size);
                   }
 
                   /* Go to end of line. */
@@ -1280,14 +1349,12 @@ eval_html_dir_list(char *html_buffer)
                       (*(ptr + 4) == 'b') && (*(ptr + 5) == 'l') &&
                       (*(ptr + 6) == 'e') && (*(ptr + 7) == '>'))
                   {
-                     (void)printf("Directory empty. (%s %d)\n",
-                                  __FILE__, __LINE__);
+                     trans_log(DEBUG_SIGN, __FILE__, __LINE__, NULL, NULL,
+                               "Directory empty.");
                      return(SUCCESS);
                   }
                }
-               (void)printf("Unknown HTML directory listing. Please send author a link so that this can be implemented. (%s %d)\n",
-                            __FILE__, __LINE__);
-               return(INCORRECT);
+               status = href_list(html_buffer, bytes_buffered, p_db);
             }
          }
               /* Pre type listing. */
@@ -1317,9 +1384,9 @@ eval_html_dir_list(char *html_buffer)
                     {
                        ptr++;
                        if ((*ptr == 'a') && (*(ptr + 1) == ' ') &&
-                           (*(ptr + 2) == 'h') && (*(ptr + 3) == 'r') &&
-                           (*(ptr + 4) == 'e') && (*(ptr + 5) == 'f') &&
-                           (*(ptr + 6) == '=') && (*(ptr + 7) == '"'))
+                        (*(ptr + 2) == 'h') && (*(ptr + 3) == 'r') &&
+                        (*(ptr + 4) == 'e') && (*(ptr + 5) == 'f') &&
+                        (*(ptr + 6) == '=') && (*(ptr + 7) == '"'))
                        {
                           ptr += 8;
                           STORE_HTML_STRING(file_name, file_name_length,
@@ -1437,6 +1504,47 @@ eval_html_dir_list(char *html_buffer)
                           exact_size = -1;
                           file_size = -1;
                        }
+                       if (p_db->verbose > 0)
+                       {
+                          (void)fprintf(stdout,
+#if SIZEOF_OFF_T == 4
+# if SIZEOF_TIME_T == 4
+                                        "%s mtime=%ld exact=%d size=%ld exact=%ld (%s %d)\n",
+# else
+                                        "%s mtime=%lld exact=%d size=%ld exact=%ld (%s %d)\n",
+# endif
+#else
+# if SIZEOF_TIME_T == 4
+                                        "%s mtime=%ld exact=%d size=%lld exact=%lld (%s %d)\n",
+# else
+                                        "%s mtime=%lld exact=%d size=%lld exact=%lld (%s %d)\n",
+# endif
+#endif
+                                        file_name, (pri_time_t)file_mtime,
+                                        exact_date, (pri_off_t)file_size,
+                                        (pri_off_t)exact_size, __FILE__,
+                                        __LINE__);
+                       }
+                       else
+                       {
+                          (void)fprintf(stdout,
+#if SIZEOF_OFF_T == 4
+# if SIZEOF_TIME_T == 4
+                                        "%s mtime=%ld exact=%d size=%ld exact=%ld\n",
+# else
+                                        "%s mtime=%lld exact=%d size=%ld exact=%ld\n",
+# endif
+#else
+# if SIZEOF_TIME_T == 4
+                                        "%s mtime=%ld exact=%d size=%lld exact=%lld\n",
+# else
+                                        "%s mtime=%lld exact=%d size=%lld exact=%lld\n",
+# endif
+#endif
+                                        file_name, (pri_time_t)file_mtime,
+                                        exact_date, (pri_off_t)file_size,
+                                        (pri_off_t)exact_size);
+                       }
                     }
                     else
                     {
@@ -1446,10 +1554,6 @@ eval_html_dir_list(char *html_buffer)
                        file_size = -1;
                        break;
                     }
-
-                    (void)printf("name=%s length=%d mtime=%ld exact_date=%d exact_size=%ld file_size=%ld\n",
-                                 file_name, file_name_length, file_mtime,
-                                 exact_date, exact_size, file_size);
 
                     /* Go to end of line. */
                     while ((*ptr != '\n') && (*ptr != '\r') &&
@@ -1501,8 +1605,23 @@ eval_html_dir_list(char *html_buffer)
                        /* Store file name. */
                        STORE_HTML_STRING(file_name, file_name_length,
                                          MAX_FILENAME_LENGTH, '<');
-                       exact_size = -1;
+
+                       if (p_db->verbose > 0)
+                       {
+                          (void)fprintf(stdout,
+                                        "%s mtime=-1 exact=%d size=-1 exact=-1 (%s %d)\n",
+                                        file_name, exact_date, __FILE__,
+                                        __LINE__);
+                       }
+                       else
+                       {
+                          (void)fprintf(stdout,
+                                        "%s mtime=-1 exact=%d size=-1 exact=-1\n",
+                                        file_name, exact_date);
+                       }
                        file_mtime = -1;
+                       exact_size = -1;
+                       file_size = -1;
                     }
                     else
                     {
@@ -1512,10 +1631,6 @@ eval_html_dir_list(char *html_buffer)
                        file_size = -1;
                        break;
                     }
-
-                    (void)printf("name=%s length=%d mtime=%ld exact_date=%d exact_size=%ld file_size=%ld\n",
-                                 file_name, file_name_length, file_mtime,
-                                 exact_date, exact_size, file_size);
 
                     /* Go to end of line. */
                     while ((*ptr != '\n') && (*ptr != '\r') &&
@@ -1531,20 +1646,395 @@ eval_html_dir_list(char *html_buffer)
               }
               else
               {
-                 (void)printf("Unknown HTML directory listing. Please send author a link so that this can be implemented. (%s %d)\n",
-                              __FILE__, __LINE__);
-                 return(INCORRECT);
+                 status = href_list(html_buffer, bytes_buffered, p_db);
               }
       }
       else
       {
-         (void)printf("Unknown HTML directory listing. Please send author a link so that this can be implemented. (%s %d)\n",
-                      __FILE__, __LINE__);
-         return(INCORRECT);
+         status = href_list(html_buffer, bytes_buffered, p_db);
       }
    }
 
    return(SUCCESS);
+}
+
+
+/*+++++++++++++++++++++++++++++ href_list() +++++++++++++++++++++++++++++*/
+static int
+href_list(char *html_buffer, off_t bytes_buffered, struct data *p_db)
+{
+   int    exact_date,
+          file_name_length = -1,
+          status = SUCCESS;
+   off_t  exact_size,
+          file_size;
+   time_t file_mtime;
+   char   date_str[MAX_FILENAME_LENGTH],
+          *end_ptr = html_buffer + bytes_buffered,
+          file_name[MAX_FILENAME_LENGTH],
+          *ptr = html_buffer;
+
+   while ((ptr = llposi(ptr, (end_ptr - ptr), "<a href=\"", 9)) != NULL)
+   {
+      ptr--;
+      file_name_length = 0;
+      exact_size = -1;
+      file_size = -1;
+      exact_date = -1;
+      file_mtime = -1;
+
+      STORE_HTML_STRING(file_name, file_name_length, MAX_FILENAME_LENGTH, '"');
+      if (file_name_length > 0)
+      {
+         /* Remove html tag (eg <view-source>). */
+         if (*(ptr - 1) == '>')
+         {
+            char *tmp_ptr = &file_name[file_name_length - 1];
+
+            while ((tmp_ptr > file_name) && (*tmp_ptr != '<'))
+            {
+               tmp_ptr--;
+            }
+            if (*tmp_ptr == '<')
+            {
+               tmp_ptr--;
+               if (*tmp_ptr == ' ')
+               {
+                  while (*tmp_ptr == ' ')
+                  {
+                     tmp_ptr--;
+                  }
+                  tmp_ptr++;
+               }
+               *tmp_ptr = '\0';
+               file_name_length = tmp_ptr - file_name;
+            }
+         }
+
+         /* If filename has a / at end, assume it is a directory. */
+         if (file_name[file_name_length - 1] == '/')
+         {
+            continue;
+         }
+         ptr++; /* Away with " */
+         if (*ptr == '>')
+         {
+            ptr++;
+
+            while (*ptr == ' ')
+            {
+               ptr++;
+            }
+
+            /* Remove partial name. */
+            while ((*ptr != '<') && (*ptr != '\n') &&
+                   (*ptr != '\r') && (*ptr != '\0'))
+            {
+               ptr++;
+            }
+         }
+         while (*ptr == '<')
+         {
+            ptr++;
+            while ((*ptr != '>') && (*ptr != '\n') &&
+                   (*ptr != '\r') && (*ptr != '\0'))
+            {
+               ptr++;
+            }
+            if (*ptr == '>')
+            {
+               ptr++;
+               while (*ptr == ' ')
+               {
+                  ptr++;
+               }
+            }
+         }
+         if ((*ptr != '\n') && (*ptr != '\r') &&
+             (*ptr != '\0'))
+         {
+            /* Store date string. */
+            STORE_HTML_DATE();
+            file_mtime = datestr2unixtime(date_str, &exact_date);
+            while (*ptr == '<')
+            {
+               ptr++;
+               while ((*ptr != '>') && (*ptr != '\n') &&
+                      (*ptr != '\r') && (*ptr != '\0'))
+               {
+                  ptr++;
+               }
+               if (*ptr == '>')
+               {
+                  ptr++;
+                  while (*ptr == ' ')
+                  {
+                     ptr++;
+                  }
+               }
+            }
+
+            if ((*ptr != '\n') && (*ptr != '\r') &&
+                (*ptr != '\0'))
+            {
+               int str_len;
+
+               /* Store size string. */
+               STORE_HTML_STRING(date_str, str_len,
+                                 MAX_FILENAME_LENGTH, '<');
+               exact_size = convert_size(date_str, &file_size);
+            }
+         }
+      }
+      else
+      {
+         continue;
+      }
+
+      if (p_db->hostname[0] != '\0')
+      {
+         /* Check if file name is a URL. */
+         if ((file_name[4] == ':') && (file_name[5] == '/') &&
+             (file_name[6] == '/'))
+         {
+            /* http */
+            if ((file_name[0] == 'h') && (file_name[1] == 't') &&
+                (file_name[2] == 't') && (file_name[3] == 'p'))
+            {
+               int          port = DEFAULT_HTTP_PORT;
+               unsigned int error_mask;
+               time_t       now = time(NULL);
+               char         hostname[MAX_REAL_HOSTNAME_LENGTH + 1],
+                            password[MAX_USER_NAME_LENGTH + 1],
+                            remote_dir[MAX_RECIPIENT_LENGTH + 1],
+                            user[MAX_USER_NAME_LENGTH + 1];
+
+               if ((error_mask = url_evaluate(file_name, NULL, user, NULL, NULL,
+#ifdef WITH_SSH_FINGERPRINT
+                                              NULL, NULL,
+#endif
+                                              password, NO, hostname, &port,
+                                              remote_dir, NULL, &now,
+                                              NULL, NULL, NULL, NULL,
+                                              NULL, NULL)) > 3)
+               {
+                  continue;
+               }
+               else
+               {
+                  if ((port != p_db->port) ||
+                      (strcmp(hostname, p_db->hostname) != 0) ||
+                      (strcmp(user, p_db->user) != 0) ||
+                      (strcmp(password, p_db->password) != 0))
+                  {
+                     continue;
+                  }
+                  if (strncmp(p_db->remote_dir, remote_dir,
+                              strlen(p_db->remote_dir)) != 0)
+                  {
+                     char *tmp_ptr = &file_name[7];
+
+                     while ((*tmp_ptr != '/') && (*tmp_ptr != '\0'))
+                     {
+                        tmp_ptr++;
+                     }
+                     if (*tmp_ptr == '/')
+                     {
+                        (void)memmove(file_name, tmp_ptr, strlen(tmp_ptr) + 1);
+                     }
+                     else
+                     {
+                        continue;
+                     }
+                  }
+                  else
+                  {
+                     size_t length = 0;
+                     char   *tmp_ptr = file_name + strlen(file_name);
+
+                     /* Just show file name. */
+                     while ((tmp_ptr > file_name) && (*tmp_ptr != '/'))
+                     {
+                        tmp_ptr--;
+                        length++;
+                     }
+                     if (*tmp_ptr == '/')
+                     {
+                        tmp_ptr++;
+                        (void)memmove(file_name, tmp_ptr, length);
+                     }
+                     else
+                     {
+                        continue;
+                     }
+                  }
+               }
+            }
+                 /* sftp */
+            else if ((file_name[0] == 's') && (file_name[1] == 'f') &&
+                     (file_name[2] == 't') && (file_name[3] == 'p'))
+                 {
+                    continue;
+                 }
+#ifdef WITH_SSL
+                 /* ftps */
+            else if ((file_name[0] == 'f') && (file_name[1] == 't') &&
+                     (file_name[2] == 'p') && (file_name[3] == 's'))
+                 {
+                    continue;
+                 }
+#endif
+         }
+#ifdef WITH_SSL
+         else if ((file_name[5] == ':') && (file_name[6] == '/') &&
+                  (file_name[7] == '/'))
+              {
+                 /* https */
+                 if ((file_name[0] == 'h') && (file_name[1] == 't') &&
+                     (file_name[2] == 't') && (file_name[3] == 'p') &&
+                     (file_name[4] == 's'))
+                 {
+                    int          port = DEFAULT_HTTPS_PORT;
+                    unsigned int error_mask;
+                    time_t       now = time(NULL);
+                    char         hostname[MAX_REAL_HOSTNAME_LENGTH + 1],
+                                 password[MAX_USER_NAME_LENGTH + 1],
+                                 remote_dir[MAX_RECIPIENT_LENGTH + 1],
+                                 user[MAX_USER_NAME_LENGTH + 1];
+
+                    if ((error_mask = url_evaluate(file_name, NULL, user, NULL, NULL,
+#ifdef WITH_SSH_FINGERPRINT
+                                                   NULL, NULL,
+#endif
+                                                   password, NO, hostname, &port,
+                                                   remote_dir, NULL, &now,
+                                                   NULL, NULL, NULL, NULL,
+                                                   NULL, NULL)) > 3)
+                    {
+                       continue;
+                    }
+                    else
+                    {
+                       if ((port != p_db->port) ||
+                           (strcmp(hostname, p_db->hostname) != 0) ||
+                           (strcmp(user, p_db->user) != 0) ||
+                           (strcmp(password, p_db->password) != 0))
+                       {
+                          continue;
+                       }
+                       if (strncmp(p_db->remote_dir, remote_dir, strlen(p_db->remote_dir)) != 0)
+                       {
+                          char *tmp_ptr = &file_name[8];
+
+                          while ((*tmp_ptr != '/') && (*tmp_ptr != '\0'))
+                          {
+                             tmp_ptr++;
+                          }
+                          if (*tmp_ptr == '/')
+                          {
+                             (void)memmove(file_name, tmp_ptr, strlen(tmp_ptr) + 1);
+                          }
+                          else
+                          {
+                             continue;
+                          }
+                       }
+                       else
+                       {
+                          size_t length = 0;
+                          char   *tmp_ptr = file_name + strlen(file_name);
+
+                          /* Just show file name. */
+                          while ((tmp_ptr > file_name) && (*tmp_ptr != '/'))
+                          {
+                             tmp_ptr--;
+                             length++;
+                          }
+                          if (*tmp_ptr == '/')
+                          {
+                             tmp_ptr++;
+                             (void)memmove(file_name, tmp_ptr, length);
+                          }
+                          else
+                          {
+                             continue;
+                          }
+                       }
+                    }
+                 }
+              }
+#endif
+         else if ((file_name[2] == ':') && (file_name[3] == '/') &&
+                  (file_name[4] == '/'))
+              {
+                 /* ftp */
+                 if ((file_name[0] == 'f') && (file_name[1] == 't') &&
+                     (file_name[2] == 'p'))
+                 {
+                    continue;
+                 }
+              }
+              /* mailto:// */
+         else if ((file_name[0] == 'm') && (file_name[1] == 'a') &&
+                  (file_name[2] == 'i') && (file_name[3] == 'l') &&
+                  (file_name[4] == 't') && (file_name[5] == 'o') &&
+                  (file_name[6] == ':') && (file_name[7] == '/') &&
+                  (file_name[8] == '/'))
+              {
+                 continue;
+              }
+      }
+
+      if ((file_name[0] == '?') && (file_name[1] == 'C') &&
+          (file_name[2] == '=') && (file_name[4] == ';'))
+      {
+         continue;
+      }
+
+      if (p_db->verbose > 0)
+      {
+         (void)fprintf(stdout,
+#if SIZEOF_OFF_T == 4
+# if SIZEOF_TIME_T == 4
+                       "%s mtime=%ld exact=%d size=%ld exact=%ld (%s %d)\n",
+# else
+                       "%s mtime=%lld exact=%d size=%ld exact=%ld (%s %d)\n",
+# endif
+#else
+# if SIZEOF_TIME_T == 4
+                       "%s mtime=%ld exact=%d size=%lld exact=%lld (%s %d)\n",
+# else
+                       "%s mtime=%lld exact=%d size=%lld exact=%lld (%s %d)\n",
+# endif
+#endif
+                       file_name, (pri_time_t)file_mtime,
+                       exact_date, (pri_off_t)file_size,
+                       (pri_off_t)exact_size, __FILE__, __LINE__);
+      }
+      else
+      {
+         (void)fprintf(stdout,
+#if SIZEOF_OFF_T == 4
+# if SIZEOF_TIME_T == 4
+                       "%s mtime=%ld exact=%d size=%ld exact=%ld\n",
+# else
+                       "%s mtime=%lld exact=%d size=%ld exact=%ld\n",
+# endif
+#else
+# if SIZEOF_TIME_T == 4
+                       "%s mtime=%ld exact=%d size=%lld exact=%lld\n",
+# else
+                       "%s mtime=%lld exact=%d size=%lld exact=%lld\n",
+# endif
+#endif
+                       file_name, (pri_time_t)file_mtime,
+                       exact_date, (pri_off_t)file_size,
+                       (pri_off_t)exact_size);
+      }
+      bytes_buffered = end_ptr - ptr;
+   } /* while "<a href=" */
+
+   return(status);
 }
 
 

@@ -155,6 +155,19 @@ the new value:
    <td valign=top>show_log, show_elog, show_ilog, show_olog, show_dlog</td>
 </tr>
 <tr>
+   <td valign=top><a name="add_afd_priority">ADD_AFD_PRIORITY</a></td>
+   <td>If set to YES the AFD priority from DIR_CONFIG is added to the
+       scheduling priority. Process effected by this are all those started
+       via the exec and pexec option and all sf_xxx and gf_xxx process. This
+       value is added to any of the above value. For example if FD_PRIORITY
+       set to 5 and an AFD priority of 9 is set for a job the resulting
+       sf_xxx and/or gf_xxx process will have a priority of 14. If there is
+       a pexec option set and EXEC_BASE_PRIORITY is 2 then the resulting
+       priority of the executing process would be 11.</td>
+   <td valign=top>NO</td>
+   <td valign=top>amg, fd</td>
+</tr>
+<tr>
    <td valign=top><a name="max_nice_value">MAX_NICE_VALUE</a></td>
    <td>Usually it is not needed to set this value, but it can be used to
        increase or decrease the maximum nice value to what your system
@@ -269,7 +282,7 @@ the new value:
    <td>The default number of parallel process that may be forked for
        sending the data. This is the default value set by AMG when this
        destination is new.</td>
-   <td valign=top>2</td>
+   <td valign=top>3</td>
    <td valign=top>amg</td>
 </tr>
 <tr>
@@ -373,12 +386,14 @@ the new value:
    <td valign=top><a name="default_delete_files_flag">DEFAULT_DELETE_FILES_FLAG</a></td>
    <td>What to do with files that have reached a certain age but cannot
        be transmitted because either there is no rule (Unknown), they are
-       being queued by AFD (Queued), they are old locked files (Locked) or
-       they are old locked files on a remote host (Rlocked). By specifying
-       one of the above those files will be automatically removed by AFD
-       when DEFAULT_OLD_FILE_TIME value has been reached. To specify more
-       then one type, just add the next with a space or comma as a separator
-       sign and the whole string must be placed in ".</td>
+       being queued by AFD (Queued), they are old locked files (Locked),
+       they are old locked files on a remote host (Rlocked) or old locked
+       files in the $AFD_WORK_DIR/files/incoming directory (Ilocked). By
+       specifying one of the above those files will be automatically
+       removed by AFD when DEFAULT_OLD_FILE_TIME value has been reached.
+       To specify more then one type, just add the next with a space or
+       comma as a separator sign and the whole string must be placed
+       in ".</td>
    <td valign=top>Not set</td>
    <td valign=top>amg</td>
 </tr>
@@ -607,6 +622,21 @@ the new value:
    <td valign=top>amg</td>
 </tr>
 <tr>
+   <td valign=top><a name="force_set_hardlinks_protected">FORCE_SET_HARDLINKS_PROTECTED</a></td>
+   <td>When files come in with a different UID then the UID under which AFD
+       is active, the files need to be copied to an internal AFD directory
+       if /proc/sys/fs/protected_hardlinks is set to 1. The permissions of
+       this file is readable for root only with older Kernels. If it is
+       unreadable and this is set to YES, AFD will assume that protected
+       hardlinks are always set. This will only have any effect if AFD was
+       compiled with configure option --enable-dir_check_cap_chown and
+       installed via RPM. That will allow AFD to change the UID of the
+       file to it's UID and will then be able to hardlink the file instead
+       of copying it. This will reduce disk IO considerably.</td>
+       <td valign=top>NO</td>
+       <td valign=top>amg</td>
+</tr>
+<tr>
    <td valign=top><a name="one_dir_copy_timeout">ONE_DIR_COPY_TIMEOUT</a></td>
    <td>When AMG has collected MAX_COPIED_FILES, it will try to continue to
        copy from this directory until it reaches the timeout set by this
@@ -632,6 +662,21 @@ the new value:
        important (with '*'), this is the minimum time in second that these
        directories have to wait during one scan of all directories.</td>
    <td valign=top>30</td>
+   <td valign=top>amg</td>
+</tr>
+<tr>
+   <td valign=top><a name="max_check_file_dir">MAX_CHECK_FILE_DIR</a></td>
+   <td>AFD checks every 25 minutes (DIR_CHECK_TIME) if there are files
+       without a job. This can happen during an unclean shutdown or an
+       error in the code. If many such jobs have accumulated, depending
+       on the speed of the system, it can take very long before AFD
+       starts handling new jobs. The MAX_CHECK_FILE_DIR parameter allows
+       the administrator to tune this value. A zero will make AFD to
+       always do a full check. If inotify is used it is recommended to
+       set this value higher, since it will generate lots of jobs with
+       only one file. With 'afdcmd -k' one can also force a full check.
+       </td>
+   <td valign=top>2050</td>
    <td valign=top>amg</td>
 </tr>
 <tr>
@@ -844,7 +889,7 @@ VIEW_DATA_PROG [--with-show_cmd] &lt;progname&gt; &lt;pattern&gt;
        Note the first value is always the alias name of the program name that
        is shown in show_olog. This may only be 8 characters long. With the
        option --with-show_cmd one can show the output of programs that just
-       write to STDOUT and/or STDERR. here some example entries:
+       write to STDOUT and/or STDERR. Here some example entries:
        <pre>
      VIEW_DATA_NO_FILTER_PROG    XV   /usr/bin/xv
      VIEW_DATA_NO_FILTER_PROG    Xpdf xpdf
@@ -888,9 +933,9 @@ restarted.
 <table width="100%">
 <tr>
    <td width="90%"><small><address>
-   Copyright &copy; 1999 - 2023 by H.Kiehl<br>
+   Copyright &copy; 1999 - 2025 by H.Kiehl<br>
    <a href="mailto:Holger.Kiehl@dwd.de?subject=AFD Homepage">Holger.Kiehl@dwd.de</a><br>
-   Last updated: 26.11.2023
+   Last updated: 08.03.2025
    </address></small></td>
    <td nowrap><small><img align=middle src="../images/reddot.gif" alt="[red dot]"><a href="contents.html">Index</a></small></td>
    <td nowrap><small><img align=middle src="../images/reddot.gif" alt="[red dot]"><a href="index.html">Home</a></small></td>
